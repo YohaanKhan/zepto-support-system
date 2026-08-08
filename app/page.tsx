@@ -1,13 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 import { Icon } from "@/components/Icon";
-import { TicketCard } from "@/components/TicketCard";
+import type { IconName } from "@/components/Icon";
+import { TicketCard, formatAction, formatPercent } from "@/components/TicketCard";
 import { TicketDrawer } from "@/components/TicketDrawer";
-import type { BoardCard, BoardResponse, Decision } from "@/lib/types";
+import type { BoardCard, BoardResponse, Decision, ResolutionAction } from "@/lib/types";
 
 type LoadStatus = "loading" | "ready" | "error";
 type LaneFilter = "all" | "auto" | "human";
+type AppView = "board" | "health";
 type Notice = { tone: "success" | "error"; message: string } | null;
 
 export default function Home() {
@@ -16,6 +19,7 @@ export default function Home() {
   const [notice, setNotice] = useState<Notice>(null);
   const [busyAction, setBusyAction] = useState<"refresh" | "pipeline" | null>(null);
   const [ticketSubmitting, setTicketSubmitting] = useState(false);
+  const [view, setView] = useState<AppView>("board");
   const [query, setQuery] = useState("");
   const [laneFilter, setLaneFilter] = useState<LaneFilter>("all");
   const [showSubmit, setShowSubmit] = useState(false);
@@ -103,18 +107,26 @@ export default function Home() {
   }
 
   function selectLane(next: LaneFilter) {
+    setView("board");
     setLaneFilter(next);
     setSelectedTicketId(null);
   }
 
+  function navigate(next: AppView) {
+    if (ticketSubmitting) return;
+    setView(next);
+    setSelectedTicketId(null);
+    setShowSubmit(false);
+  }
+
+  function openSubmit() {
+    setView("board");
+    setShowSubmit(true);
+  }
+
   return (
     <div className="app-shell">
-      <DesktopSidebar
-        active={laneFilter}
-        counts={counts}
-        onSelect={selectLane}
-        onCreate={() => setShowSubmit(true)}
-      />
+      <DesktopSidebar active={view} onNavigate={navigate} onCreate={openSubmit} />
 
       <div className="workspace">
         <header className="topbar">
@@ -123,20 +135,26 @@ export default function Home() {
               <span className="brand-mark"><Icon name="sparkles" /></span>
               <span>Zepto Support</span>
             </div>
-            <label className="search-field">
-              <Icon name="search" />
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search ticket, order or action"
-                aria-label="Search tickets"
-              />
-              {query && (
-                <button type="button" onClick={() => setQuery("")} aria-label="Clear search">
-                  <Icon name="close" />
-                </button>
-              )}
-            </label>
+
+            {view === "board" ? (
+              <label className="search-field">
+                <Icon name="search" />
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search ticket, order or action"
+                  aria-label="Search tickets"
+                />
+                {query && (
+                  <button type="button" onClick={() => setQuery("")} aria-label="Clear search">
+                    <Icon name="close" />
+                  </button>
+                )}
+              </label>
+            ) : (
+              <div className="topbar-view-title"><span><Icon name="analytics" /></span><div><strong>Health dashboard</strong><small>Current decision snapshot</small></div></div>
+            )}
+
             <div className="topbar-actions">
               <span className="system-status"><i /> Deterministic policy</span>
               <button
@@ -144,24 +162,24 @@ export default function Home() {
                 className="icon-button"
                 onClick={() => void load(true)}
                 disabled={busyAction !== null || ticketSubmitting}
-                aria-label="Refresh board"
-                title="Refresh board"
+                aria-label="Refresh data"
+                title="Refresh data"
               >
                 <Icon name="refresh" className={busyAction === "refresh" ? "spin" : ""} />
               </button>
-              <button type="button" className="primary-button" onClick={() => setShowSubmit(true)}>
+              <button type="button" className="primary-button" onClick={openSubmit}>
                 <Icon name="plus" /> New ticket
               </button>
             </div>
           </div>
 
           <div className="topbar-secondary">
-            <div className="breadcrumbs"><span>Command center</span><Icon name="chevron" /><strong>Resolution board</strong></div>
-            <div className="filter-tabs" role="group" aria-label="Filter tickets by lane">
-              <FilterButton label="All tickets" count={counts.total} active={laneFilter === "all"} onClick={() => selectLane("all")} />
-              <FilterButton label="Auto-resolved" count={counts.auto} active={laneFilter === "auto"} onClick={() => selectLane("auto")} tone="success" />
-              <FilterButton label="Human review" count={counts.human} active={laneFilter === "human"} onClick={() => selectLane("human")} tone="warning" />
-            </div>
+            <div className="breadcrumbs"><span>Command center</span><Icon name="chevron" /><strong>{view === "board" ? "Resolution board" : "Health dashboard"}</strong></div>
+            {view === "board" ? (
+              <LaneSwitch active={laneFilter} counts={counts} onSelect={selectLane} />
+            ) : (
+              <div className="health-context"><Icon name="analytics" /> {counts.total} current decisions · {autoRate}% automation</div>
+            )}
             <button
               type="button"
               className="secondary-button run-button"
@@ -173,149 +191,97 @@ export default function Home() {
           </div>
         </header>
 
-        <main className="dashboard">
-          <section className="dashboard-main" aria-labelledby="board-title">
-            <div className="page-heading">
-              <div>
-                <p className="eyebrow">AI support operations</p>
-                <h1 id="board-title">Resolution command center</h1>
-                <p>Every decision is grounded in historical precedents and checked by deterministic policy guardrails.</p>
+        <main className={`dashboard dashboard-${view}`}>
+          {view === "board" ? (
+            <section className="dashboard-main" aria-labelledby="board-title">
+              <div className="page-heading">
+                <div>
+                  <p className="eyebrow">AI support operations</p>
+                  <h1 id="board-title">Resolution command center</h1>
+                  <p>Every decision is grounded in historical precedents and checked by deterministic policy guardrails.</p>
+                </div>
+                <div className="heading-badge"><Icon name="shield" /> Auditable decisions</div>
               </div>
-              <div className="heading-badge"><Icon name="shield" /> Auditable decisions</div>
-            </div>
 
-            {notice && (
-              <div className={`notice notice-${notice.tone}`} role={notice.tone === "error" ? "alert" : "status"}>
-                <Icon name={notice.tone === "success" ? "check" : "alert"} />
-                <span>{notice.message}</span>
-                <button type="button" onClick={() => setNotice(null)} aria-label="Dismiss message"><Icon name="close" /></button>
-              </div>
-            )}
+              <NoticeBanner notice={notice} onDismiss={() => setNotice(null)} />
 
-            {showSubmit && (
-              <SubmitTicketPanel
-                disabled={busyAction !== null}
-                onBusyChange={setTicketSubmitting}
-                onClose={() => setShowSubmit(false)}
-                onSubmitted={async (decision) => {
-                  const reloaded = await load();
-                  setShowSubmit(false);
-                  if (reloaded) {
-                    setSelectedTicketId(decision.ticketId);
-                    setNotice({
-                      tone: "success",
-                      message: `${decision.ticketId} was processed and routed to ${decision.lane === "auto" ? "auto-resolution" : "human review"}.`,
-                    });
-                  }
-                }}
-              />
-            )}
+              {showSubmit && (
+                <SubmitTicketPanel
+                  disabled={busyAction !== null}
+                  onBusyChange={setTicketSubmitting}
+                  onClose={() => setShowSubmit(false)}
+                  onSubmitted={async (decision) => {
+                    const reloaded = await load();
+                    setShowSubmit(false);
+                    if (reloaded) {
+                      setSelectedTicketId(decision.ticketId);
+                      setNotice({
+                        tone: "success",
+                        message: `${decision.ticketId} was processed and routed to ${decision.lane === "auto" ? "auto-resolution" : "human review"}.`,
+                      });
+                    }
+                  }}
+                />
+              )}
 
-            {status === "loading" && <BoardSkeleton />}
-            {status === "error" && !data && (
-              <div className="error-state">
-                <span><Icon name="alert" /></span>
-                <h2>Board unavailable</h2>
-                <p>The support data could not be loaded. Check the Supabase environment and try again.</p>
-                <button className="primary-button" type="button" onClick={() => void load(true)}>Try again</button>
-              </div>
-            )}
+              {status === "loading" && <BoardSkeleton />}
+              {status === "error" && !data && <LoadError onRetry={() => void load(true)} />}
 
-            {status === "ready" && data && (
-              <div className={`board ${laneFilter !== "all" ? "board-single" : ""}`}>
-                {laneFilter !== "human" && (
-                  <Lane
-                    title="Auto-resolved"
-                    description="Safe, high-confidence actions"
-                    kind="auto"
-                    cards={autoCards}
-                    selectedId={selectedTicketId}
-                    onSelect={setSelectedTicketId}
-                    empty={query ? "No auto-resolved tickets match your search." : "No tickets have been auto-resolved yet."}
-                  />
-                )}
-                {laneFilter !== "auto" && (
-                  <Lane
-                    title="Needs human review"
-                    description="Conflicts, weak evidence or policy vetoes"
-                    kind="human"
-                    cards={humanCards}
-                    selectedId={selectedTicketId}
-                    onSelect={setSelectedTicketId}
-                    empty={query ? "No human-review tickets match your search." : "The human-review queue is clear."}
-                  />
-                )}
-              </div>
-            )}
-          </section>
-
-          <aside className="insights-rail" aria-label="Board insights">
-            <div className="rail-heading">
-              <div>
-                <p className="eyebrow">Board overview</p>
-                <h2>Resolution health</h2>
-              </div>
-              <span className="live-dot"><i /> Current</span>
-            </div>
-            <div className="kpi-grid">
-              <KpiCard label="Total decisions" value={counts.total} icon="ticket" />
-              <KpiCard label="Auto-resolved" value={counts.auto} icon="check" tone="success" />
-              <KpiCard label="Human review" value={counts.human} icon="alert" tone="warning" />
-              <KpiCard label="Automation rate" value={`${autoRate}%`} icon="sparkles" tone="brand" />
-            </div>
-
-            <section className="rail-card corpus-card">
-              <div className="rail-card-title"><span><Icon name="layers" /></span><div><h3>Evidence corpus</h3><p>Deterministic retrieval</p></div></div>
-              <div className="corpus-number">300 <small>resolved tickets</small></div>
-              <div className="corpus-track"><span style={{ width: "100%" }} /></div>
-              <p>Each recommendation surfaces up to three qualifying precedents from the verified history set.</p>
+              {status === "ready" && data && (
+                <div className={`board ${laneFilter !== "all" ? "board-single" : ""}`}>
+                  {laneFilter !== "human" && (
+                    <Lane
+                      title="Auto-resolved"
+                      description="Safe, high-confidence actions"
+                      kind="auto"
+                      cards={autoCards}
+                      selectedId={selectedTicketId}
+                      onSelect={setSelectedTicketId}
+                      empty={query ? "No auto-resolved tickets match your search." : "No tickets have been auto-resolved yet."}
+                    />
+                  )}
+                  {laneFilter !== "auto" && (
+                    <Lane
+                      title="Needs human review"
+                      description="Conflicts, weak evidence or policy vetoes"
+                      kind="human"
+                      cards={humanCards}
+                      selectedId={selectedTicketId}
+                      onSelect={setSelectedTicketId}
+                      empty={query ? "No human-review tickets match your search." : "The human-review queue is clear."}
+                    />
+                  )}
+                </div>
+              )}
             </section>
-
-            <section className="rail-card workflow-card">
-              <div className="rail-card-title"><span><Icon name="shield" /></span><div><h3>Decision workflow</h3><p>Transparent by design</p></div></div>
-              <ol>
-                <li><b>1</b><span><strong>Retrieve</strong><small>Find matching support history</small></span></li>
-                <li><b>2</b><span><strong>Vote</strong><small>Score action agreement</small></span></li>
-                <li><b>3</b><span><strong>Guard</strong><small>Apply deterministic policy</small></span></li>
-                <li><b>4</b><span><strong>Route</strong><small>Auto-resolve or request review</small></span></li>
-              </ol>
-            </section>
-
-            <button type="button" className="create-ticket-cta" onClick={() => setShowSubmit(true)}>
-              <span><Icon name="plus" /></span>
-              <div><strong>Test a live complaint</strong><small>Submit an unseen issue to the decision pipeline</small></div>
-              <Icon name="chevron" />
-            </button>
-          </aside>
+          ) : (
+            <HealthDashboard
+              cards={allCards}
+              status={status}
+              notice={notice}
+              onDismissNotice={() => setNotice(null)}
+              onRetry={() => void load(true)}
+              onOpenBoard={() => navigate("board")}
+            />
+          )}
         </main>
       </div>
 
-      <MobileNavigation active={laneFilter} onSelect={selectLane} onCreate={() => setShowSubmit(true)} />
+      <MobileNavigation active={view} onNavigate={navigate} onCreate={openSubmit} />
       <TicketDrawer card={selectedTicket} onClose={() => setSelectedTicketId(null)} />
     </div>
   );
 }
 
-function DesktopSidebar({
-  active,
-  counts,
-  onSelect,
-  onCreate,
-}: {
-  active: LaneFilter;
-  counts: BoardResponse["counts"];
-  onSelect: (filter: LaneFilter) => void;
-  onCreate: () => void;
-}) {
+function DesktopSidebar({ active, onNavigate, onCreate }: { active: AppView; onNavigate: (view: AppView) => void; onCreate: () => void }) {
   return (
     <aside className="sidebar">
-      <button type="button" className="sidebar-logo" onClick={() => onSelect("all")} aria-label="Zepto support home">
+      <button type="button" className="sidebar-logo" onClick={() => onNavigate("board")} aria-label="Zepto support home">
         <Icon name="sparkles" />
       </button>
       <nav aria-label="Primary navigation">
-        <SidebarButton label="Overview" icon="overview" active={active === "all"} onClick={() => onSelect("all")} />
-        <SidebarButton label="Auto-resolved" icon="check" count={counts.auto} active={active === "auto"} onClick={() => onSelect("auto")} />
-        <SidebarButton label="Human review" icon="alert" count={counts.human} active={active === "human"} onClick={() => onSelect("human")} />
+        <SidebarButton label="Resolution board" icon="overview" active={active === "board"} onClick={() => onNavigate("board")} />
+        <SidebarButton label="Health dashboard" icon="analytics" active={active === "health"} onClick={() => onNavigate("health")} />
       </nav>
       <div className="sidebar-bottom">
         <button type="button" className="sidebar-create" onClick={onCreate} title="Create live ticket"><Icon name="plus" /></button>
@@ -325,48 +291,29 @@ function DesktopSidebar({
   );
 }
 
-function SidebarButton({
-  label,
-  icon,
-  count,
-  active,
-  onClick,
-}: {
-  label: string;
-  icon: "overview" | "check" | "alert";
-  count?: number;
-  active: boolean;
-  onClick: () => void;
-}) {
+function SidebarButton({ label, icon, active, onClick }: { label: string; icon: IconName; active: boolean; onClick: () => void }) {
   return (
-    <button type="button" className={`sidebar-button ${active ? "active" : ""}`} onClick={onClick} aria-label={label} aria-pressed={active} title={label}>
+    <button type="button" className={`sidebar-button ${active ? "active" : ""}`} onClick={onClick} aria-label={label} aria-current={active ? "page" : undefined} title={label}>
       <Icon name={icon} />
-      {count !== undefined && <span>{count}</span>}
     </button>
   );
 }
 
-function FilterButton({ label, count, active, onClick, tone = "neutral" }: { label: string; count: number; active: boolean; onClick: () => void; tone?: "neutral" | "success" | "warning" }) {
-  return <button type="button" className={`filter-tab filter-${tone} ${active ? "active" : ""}`} onClick={onClick} aria-pressed={active}>{label}<span>{count}</span></button>;
+function LaneSwitch({ active, counts, onSelect }: { active: LaneFilter; counts: BoardResponse["counts"]; onSelect: (lane: LaneFilter) => void }) {
+  return (
+    <div className="lane-switch" role="group" aria-label="Switch ticket lane">
+      <LaneSwitchButton label="All" count={counts.total} active={active === "all"} onClick={() => onSelect("all")} />
+      <LaneSwitchButton label="Auto" count={counts.auto} active={active === "auto"} tone="auto" onClick={() => onSelect("auto")} />
+      <LaneSwitchButton label="Human" count={counts.human} active={active === "human"} tone="human" onClick={() => onSelect("human")} />
+    </div>
+  );
 }
 
-function Lane({
-  title,
-  description,
-  kind,
-  cards,
-  selectedId,
-  onSelect,
-  empty,
-}: {
-  title: string;
-  description: string;
-  kind: "auto" | "human";
-  cards: BoardCard[];
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-  empty: string;
-}) {
+function LaneSwitchButton({ label, count, active, tone = "all", onClick }: { label: string; count: number; active: boolean; tone?: "all" | "auto" | "human"; onClick: () => void }) {
+  return <button type="button" className={`lane-switch-button switch-${tone} ${active ? "active" : ""}`} onClick={onClick} aria-pressed={active}><span>{label}</span><b>{count}</b></button>;
+}
+
+function Lane({ title, description, kind, cards, selectedId, onSelect, empty }: { title: string; description: string; kind: "auto" | "human"; cards: BoardCard[]; selectedId: string | null; onSelect: (id: string) => void; empty: string }) {
   return (
     <section className={`lane lane-${kind}`}>
       <header className="lane-header">
@@ -377,30 +324,153 @@ function Lane({
         {cards.length === 0 ? (
           <div className="lane-empty"><Icon name={kind === "auto" ? "check" : "alert"} /><p>{empty}</p></div>
         ) : (
-          cards.map((card, index) => (
-            <TicketCard key={card.ticketId} card={card} active={selectedId === card.ticketId} index={index} onSelect={() => onSelect(card.ticketId)} />
-          ))
+          cards.map((card, index) => <TicketCard key={card.ticketId} card={card} active={selectedId === card.ticketId} index={index} onSelect={() => onSelect(card.ticketId)} />)
         )}
       </div>
     </section>
   );
 }
 
-function KpiCard({ label, value, icon, tone = "neutral" }: { label: string; value: string | number; icon: "ticket" | "check" | "alert" | "sparkles"; tone?: "neutral" | "success" | "warning" | "brand" }) {
-  return <article className={`kpi-card kpi-${tone}`}><span><Icon name={icon} /></span><div><strong>{value}</strong><small>{label}</small></div></article>;
+function HealthDashboard({ cards, status, notice, onDismissNotice, onRetry, onOpenBoard }: { cards: BoardCard[]; status: LoadStatus; notice: Notice; onDismissNotice: () => void; onRetry: () => void; onOpenBoard: () => void }) {
+  const counts = {
+    auto: cards.filter((card) => card.lane === "auto").length,
+    human: cards.filter((card) => card.lane === "human").length,
+    total: cards.length,
+  };
+  const autoRate = counts.total > 0 ? Math.round((counts.auto / counts.total) * 100) : 0;
+  const averageConfidence = average(cards.map((card) => card.confidence));
+  const averageSimilarity = average(cards.map((card) => card.topSimilarity));
+  const vetoCount = cards.filter((card) => card.guardrails.some((guardrail) => guardrail.status === "veto")).length;
+  const mutationCount = cards.filter((card) => card.guardrails.some((guardrail) => guardrail.status === "mutate")).length;
+  const cancelledOrders = cards.filter((card) => card.order?.deliveryStatus === "cancelled").length;
+  const weakEvidence = cards.filter((card) => card.vetoedBy === "G5").length;
+  const templateReplies = cards.filter((card) => card.replySource === "template").length;
+  const llmReplies = cards.filter((card) => card.replySource === "llm").length;
+  const surfacedPrecedents = cards.reduce((sum, card) => sum + card.precedents.length, 0);
+  const actionMix = getActionMix(cards);
+
+  if (status === "error" && cards.length === 0) {
+    return <section className="health-dashboard"><LoadError onRetry={onRetry} /></section>;
+  }
+
+  return (
+    <section className="health-dashboard" aria-labelledby="health-title">
+      <div className="page-heading health-page-heading">
+        <div>
+          <p className="eyebrow">Decision intelligence</p>
+          <h1 id="health-title">Resolution health dashboard</h1>
+          <p>A current snapshot derived from persisted board decisions—no estimated trends or invented operational data.</p>
+        </div>
+        <button type="button" className="secondary-button" onClick={onOpenBoard}><Icon name="overview" /> Open resolution board</button>
+      </div>
+
+      <NoticeBanner notice={notice} onDismiss={onDismissNotice} />
+
+      {status === "loading" ? (
+        <div className="health-loading" aria-busy="true" aria-label="Loading health dashboard"><i /><i /><i /><i /><span className="sr-only">Loading health dashboard</span></div>
+      ) : (
+        <>
+          <div className="health-kpi-grid">
+            <HealthKpi label="Current decisions" value={counts.total} detail="Latest decision per ticket" icon="ticket" />
+            <HealthKpi label="Automation rate" value={`${autoRate}%`} detail={`${counts.auto} safely auto-routed`} icon="sparkles" tone="brand" />
+            <HealthKpi label="Human review" value={counts.human} detail="Awaiting agent attention" icon="alert" tone="warning" />
+            <HealthKpi label="Average confidence" value={formatPercent(averageConfidence)} detail="Across the current board" icon="check" tone="success" />
+          </div>
+
+          <div className="health-grid">
+            <section className="health-panel automation-panel">
+              <HealthPanelHeader icon="analytics" title="Resolution distribution" subtitle="Current board partition" />
+              <div className="automation-content">
+                <div className="automation-ring" style={{ "--automation-rate": `${autoRate * 3.6}deg` } as CSSProperties}>
+                  <div><strong>{autoRate}%</strong><small>automated</small></div>
+                </div>
+                <div className="distribution-list">
+                  <DistributionRow label="Auto-resolved" value={counts.auto} total={counts.total} tone="auto" />
+                  <DistributionRow label="Human review" value={counts.human} total={counts.total} tone="human" />
+                </div>
+              </div>
+            </section>
+
+            <section className="health-panel evidence-health-panel">
+              <HealthPanelHeader icon="layers" title="Evidence health" subtitle="Retrieval quality and corpus coverage" />
+              <div className="evidence-health-grid">
+                <SnapshotMetric label="Surfaced precedents" value={surfacedPrecedents} detail="Evidence records attached to current decisions" />
+                <SnapshotMetric label="Average top match" value={formatPercent(averageSimilarity)} detail="Similarity of rank-one precedents" />
+                <SnapshotMetric label="Weak-evidence vetoes" value={weakEvidence} detail="Tickets stopped by G5" />
+                <SnapshotMetric label="Template replies" value={templateReplies} detail={`${llmReplies} replies generated by LLM`} />
+              </div>
+            </section>
+
+            <section className="health-panel safety-panel">
+              <HealthPanelHeader icon="shield" title="Policy safety" subtitle="Visible deterministic interventions" />
+              <div className="safety-list">
+                <SafetyRow icon="alert" label="Decisions with vetoes" value={vetoCount} detail="Automatic execution blocked" tone="danger" />
+                <SafetyRow icon="shield" label="Policy mutations" value={mutationCount} detail="Amount or action safely adjusted" tone="info" />
+                <SafetyRow icon="package" label="Cancelled orders" value={cancelledOrders} detail="Shown prominently for G1 review" tone="warning" />
+                <SafetyRow icon="check" label="No veto recorded" value={Math.max(0, counts.total - vetoCount)} detail="Latest decision completed policy evaluation" tone="success" />
+              </div>
+            </section>
+
+            <section className="health-panel action-panel">
+              <HealthPanelHeader icon="overview" title="Recommended action mix" subtitle="Latest proposed actions across all tickets" />
+              <div className="action-mix-list">
+                {actionMix.length === 0 ? <p className="health-empty">No decisions are available yet.</p> : actionMix.map((item) => (
+                  <div className="action-mix-row" key={item.action}>
+                    <span><b>{formatAction(item.action)}</b><small>{item.count} ticket{item.count === 1 ? "" : "s"}</small></span>
+                    <i><i style={{ width: `${Math.round((item.count / Math.max(1, counts.total)) * 100)}%` }} /></i>
+                    <strong>{Math.round((item.count / Math.max(1, counts.total)) * 100)}%</strong>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="health-panel workflow-health-panel">
+              <HealthPanelHeader icon="sparkles" title="Decision workflow" subtitle="One reproducible path for every ticket" />
+              <ol className="health-workflow">
+                <li><b>1</b><span><strong>Retrieve</strong><small>Search qualifying historical evidence</small></span></li>
+                <li><b>2</b><span><strong>Vote</strong><small>Measure action agreement and margin</small></span></li>
+                <li><b>3</b><span><strong>Guard</strong><small>Apply G1–G5 deterministic policy checks</small></span></li>
+                <li><b>4</b><span><strong>Route</strong><small>Auto-resolve or retain human control</small></span></li>
+              </ol>
+            </section>
+          </div>
+        </>
+      )}
+    </section>
+  );
 }
 
-function SubmitTicketPanel({
-  disabled,
-  onBusyChange,
-  onClose,
-  onSubmitted,
-}: {
-  disabled: boolean;
-  onBusyChange: (busy: boolean) => void;
-  onClose: () => void;
-  onSubmitted: (decision: Decision) => Promise<void>;
-}) {
+function HealthKpi({ label, value, detail, icon, tone = "neutral" }: { label: string; value: string | number; detail: string; icon: IconName; tone?: "neutral" | "brand" | "success" | "warning" }) {
+  return <article className={`health-kpi health-kpi-${tone}`}><span><Icon name={icon} /></span><div><small>{label}</small><strong>{value}</strong><p>{detail}</p></div></article>;
+}
+
+function HealthPanelHeader({ icon, title, subtitle }: { icon: IconName; title: string; subtitle: string }) {
+  return <header className="health-panel-header"><span><Icon name={icon} /></span><div><h2>{title}</h2><p>{subtitle}</p></div></header>;
+}
+
+function DistributionRow({ label, value, total, tone }: { label: string; value: number; total: number; tone: "auto" | "human" }) {
+  const percentage = total > 0 ? Math.round((value / total) * 100) : 0;
+  return <div className={`distribution-row distribution-${tone}`}><div><span><i />{label}</span><b>{value}</b></div><div className="distribution-track"><i style={{ width: `${percentage}%` }} /></div><small>{percentage}% of current decisions</small></div>;
+}
+
+function SnapshotMetric({ label, value, detail }: { label: string; value: string | number; detail: string }) {
+  return <article className="snapshot-metric"><small>{label}</small><strong>{value}</strong><p>{detail}</p></article>;
+}
+
+function SafetyRow({ icon, label, value, detail, tone }: { icon: IconName; label: string; value: number; detail: string; tone: "danger" | "info" | "warning" | "success" }) {
+  return <div className={`safety-row safety-${tone}`}><span><Icon name={icon} /></span><div><b>{label}</b><small>{detail}</small></div><strong>{value}</strong></div>;
+}
+
+function NoticeBanner({ notice, onDismiss }: { notice: Notice; onDismiss: () => void }) {
+  if (!notice) return null;
+  return <div className={`notice notice-${notice.tone}`} role={notice.tone === "error" ? "alert" : "status"}><Icon name={notice.tone === "success" ? "check" : "alert"} /><span>{notice.message}</span><button type="button" onClick={onDismiss} aria-label="Dismiss message"><Icon name="close" /></button></div>;
+}
+
+function LoadError({ onRetry }: { onRetry: () => void }) {
+  return <div className="error-state"><span><Icon name="alert" /></span><h2>Support data unavailable</h2><p>The current decisions could not be loaded. Check the Supabase environment and try again.</p><button className="primary-button" type="button" onClick={onRetry}>Try again</button></div>;
+}
+
+function SubmitTicketPanel({ disabled, onBusyChange, onClose, onSubmitted }: { disabled: boolean; onBusyChange: (busy: boolean) => void; onClose: () => void; onSubmitted: (decision: Decision) => Promise<void> }) {
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -447,14 +517,25 @@ function BoardSkeleton() {
   return <div className="board skeleton-board" aria-label="Loading board"><div className="skeleton-lane"><i /><i /><i /></div><div className="skeleton-lane"><i /><i /><i /></div></div>;
 }
 
-function MobileNavigation({ active, onSelect, onCreate }: { active: LaneFilter; onSelect: (filter: LaneFilter) => void; onCreate: () => void }) {
+function MobileNavigation({ active, onNavigate, onCreate }: { active: AppView; onNavigate: (view: AppView) => void; onCreate: () => void }) {
   return (
     <nav className="mobile-nav" aria-label="Mobile navigation">
-      <button type="button" className={active === "all" ? "active" : ""} aria-pressed={active === "all"} onClick={() => onSelect("all")}><Icon name="overview" /><span>Overview</span></button>
-      <button type="button" className={active === "auto" ? "active" : ""} aria-pressed={active === "auto"} onClick={() => onSelect("auto")}><Icon name="check" /><span>Resolved</span></button>
+      <button type="button" className={active === "board" ? "active" : ""} aria-current={active === "board" ? "page" : undefined} onClick={() => onNavigate("board")}><Icon name="overview" /><span>Board</span></button>
       <button type="button" className="mobile-create" onClick={onCreate} aria-label="New ticket"><Icon name="plus" /></button>
-      <button type="button" className={active === "human" ? "active" : ""} aria-pressed={active === "human"} onClick={() => onSelect("human")}><Icon name="alert" /><span>Review</span></button>
-      <button type="button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}><Icon name="chevron" className="up-icon" /><span>Top</span></button>
+      <button type="button" className={active === "health" ? "active" : ""} aria-current={active === "health" ? "page" : undefined} onClick={() => onNavigate("health")}><Icon name="analytics" /><span>Health</span></button>
     </nav>
   );
+}
+
+function average(values: number[]): number {
+  if (values.length === 0) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function getActionMix(cards: BoardCard[]): { action: ResolutionAction; count: number }[] {
+  const counts = new Map<ResolutionAction, number>();
+  for (const card of cards) counts.set(card.action, (counts.get(card.action) ?? 0) + 1);
+  return [...counts.entries()]
+    .map(([action, count]) => ({ action, count }))
+    .sort((left, right) => right.count - left.count || left.action.localeCompare(right.action));
 }

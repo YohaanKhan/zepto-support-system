@@ -2,6 +2,7 @@ import type { SVGProps } from "react";
 
 export type IconName =
   | "alert"
+  | "analytics"
   | "check"
   | "chevron"
   | "close"
@@ -33,6 +34,14 @@ export function Icon({ name, ...props }: SVGProps<SVGSVGElement> & { name: IconN
           <path d="M10.3 2.9 1.8 17a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 2.9a2 2 0 0 0-3.4 0Z" />
           <path d="M12 9v4" />
           <path d="M12 17h.01" />
+        </>
+      )}
+      {name === "analytics" && (
+        <>
+          <path d="M4 20V10" />
+          <path d="M10 20V4" />
+          <path d="M16 20v-7" />
+          <path d="M22 20H2" />
         </>
       )}
       {name === "check" && (
