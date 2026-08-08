@@ -97,3 +97,80 @@ export interface NewTicketRow {
   order_id: string;
   description: string;
 }
+
+export function isTicketCategory(v: unknown): v is TicketCategory {
+  return (
+    typeof v === "string" &&
+    (TICKET_CATEGORIES as readonly string[]).includes(v)
+  );
+}
+
+// ── Pipeline domain types (ARCHITECTURE §1.2, §2.3) ────────────────────────
+
+/**
+ * A history row as the retriever consumes it. Note there is NO order context
+ * here — Triage is deliberately context-blind (Invariant #1). resolution_note
+ * and time_to_resolve_min are deliberately absent: the note leaks the label
+ * (DATA.md §4.3) and the time only feeds the savings counter.
+ */
+export interface Precedent {
+  ticketId: string;
+  category: TicketCategory;
+  description: string;
+  action: ResolutionAction;
+  csat: number;
+}
+
+/** A precedent with its similarity to the query attached. */
+export interface ScoredPrecedent extends Precedent {
+  similarity: number;
+}
+
+/** Result of the CSAT-weighted vote over a set of scored precedents. */
+export interface VoteResult {
+  proposedAction: ResolutionAction;
+  voteShare: number; // 0..1 — winner's share of total weight
+  voteMargin: number; // 0..1 — winner minus runner-up
+  runnerUpAction: ResolutionAction | null;
+  /** Per-action weights, sorted winner-first. Debug / UI only. */
+  tallies: { action: ResolutionAction; weight: number }[];
+}
+
+/** Output of Stage 1 — Triage. Persists nothing on its own (ARCHITECTURE §1.2). */
+export interface Candidate {
+  ticketId: string;
+  precedents: ScoredPrecedent[]; // all voters ≥ MIN_SIMILARITY; top 3 surface in UI
+  proposedAction: ResolutionAction;
+  topSimilarity: number; // similarity of rank-1 precedent
+  voteShare: number;
+  voteMargin: number;
+  inferredCategory: TicketCategory; // majority category among voters
+  runnerUpAction: ResolutionAction | null;
+}
+
+/** A single guardrail evaluation (ARCHITECTURE §2.3). Sprint 3 fills the rules. */
+export interface GuardrailResult {
+  id: string; // 'G1' … 'G5'
+  status: "pass" | "veto" | "mutate";
+  reason: string;
+  mutatedAction?: ResolutionAction;
+  mutatedAmount?: number;
+}
+
+/** Output of Stage 2 — Policy. The decision itself (ARCHITECTURE §2.3). */
+export interface Decision {
+  ticketId: string;
+  lane: "auto" | "human";
+  action: ResolutionAction;
+  amountInr: number | null;
+  confidence: number;
+  voteShare: number;
+  voteMargin: number;
+  topSimilarity: number;
+  precedentIds: string[]; // ordered, all voters
+  guardrails: GuardrailResult[];
+  vetoedBy: string | null; // e.g. 'G1'
+  reasoning: string; // deterministic template — NOT LLM
+  draftReply?: string; // Sprint 4/8
+  replySource?: "llm" | "template"; // Sprint 4/8
+}
