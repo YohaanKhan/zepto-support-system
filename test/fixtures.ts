@@ -3,7 +3,7 @@ import path from "node:path";
 import Papa from "papaparse";
 import { loadPrecedentsFromCsv } from "@/lib/retrieval/corpus";
 import { TfIdfRetriever } from "@/lib/retrieval/tfidf";
-import type { Candidate, DeliveryStatus, OrderRow } from "@/lib/types";
+import type { Candidate, Decision, DeliveryStatus, OrderRow } from "@/lib/types";
 
 // Shared test fixtures. Everything loads from the CSVs so the whole policy
 // suite is deterministic and needs no database.
@@ -70,6 +70,24 @@ export function mkOrder(over: Partial<OrderRow> = {}): OrderRow {
     value_inr: 500,
     delivery_time_min: 20,
     delivery_status: "delivered",
+    ...over,
+  };
+}
+
+export function mkDecision(over: Partial<Decision> = {}): Decision {
+  return {
+    ticketId: "T-TEST",
+    lane: "auto",
+    action: "partial_refund",
+    amountInr: 82,
+    confidence: 0.68,
+    voteShare: 0.68,
+    voteMargin: 0.35,
+    topSimilarity: 1.0,
+    precedentIds: [],
+    guardrails: [],
+    vetoedBy: null,
+    reasoning: "",
     ...over,
   };
 }
