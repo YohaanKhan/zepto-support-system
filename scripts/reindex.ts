@@ -12,7 +12,12 @@
  * Requires QDRANT_URL (+ optional QDRANT_API_KEY). Uses Supabase if the env is
  * set, otherwise the local CSV so it works offline.
  */
-import "dotenv/config";
+import dotenv from "dotenv";
+// Load .env.local first (Next's convention, where the real keys live), then
+// .env as a fallback. dotenv doesn't override already-set vars, so .env.local
+// wins and real shell env still wins over both.
+dotenv.config({ path: ".env.local" });
+dotenv.config({ path: ".env" });
 import { QdrantClient } from "@qdrant/js-client-rest";
 import { loadPrecedentsFromCsv, loadPrecedentsFromSupabase } from "../lib/retrieval/corpus";
 import { embed, EMBEDDING_DIM } from "../lib/retrieval/embeddings";
