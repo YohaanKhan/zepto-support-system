@@ -80,6 +80,18 @@ describe("applyGuardrails", () => {
     expect(out.vetoedBy).toBe("G5");
   });
 
+  it("weak evidence (G5) outranks an escalation veto (G4) as the headline", () => {
+    // A novel ticket often falls back to a weak escalation guess. Both G4 and
+    // G5 fire; the headline must be G5 (Scenario 2), not G4.
+    const out = applyGuardrails(
+      mkCandidate({ proposedAction: "escalation", topSimilarity: 0.24 }),
+      mkOrder(),
+    );
+    expect(out.results.find((g) => g.id === "G4")?.status).toBe("veto");
+    expect(out.results.find((g) => g.id === "G5")?.status).toBe("veto");
+    expect(out.vetoedBy).toBe("G5");
+  });
+
   it("records all five guardrails every time", () => {
     const out = applyGuardrails(mkCandidate(), mkOrder());
     expect(out.results.map((g) => g.id)).toEqual(["G1", "G2", "G3", "G4", "G5"]);

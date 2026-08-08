@@ -61,4 +61,26 @@ describe("triage — novel ticket", () => {
     const c = await run("please help me change my registered mobile number");
     expect(c.topSimilarity).toBeLessThan(0.45);
   });
+
+  // Vetted demo strings for the live box (Scenario 2). They MUST fall below
+  // MIN_SIMILARITY so G5 (weak evidence) fires — that is what makes Scenario 2
+  // demonstrable. If one creeps over 0.45, pick a different string; do NOT move
+  // the threshold or weaken the tokenizer (that would shift the 11/19 board).
+  it.each([
+    "app crashed and charged me twice for the same order",
+    "I want to close my account",
+    "the driver was extremely rude to me",
+  ])("vetted novel demo string %j → topSimilarity < 0.45 (G5 fires)", async (s) => {
+    const c = await run(s);
+    expect(c.topSimilarity).toBeLessThan(0.45);
+  });
+
+  // Known near-miss: VALIDATION §2 lists this, but it shares "the bag" (→ bread
+  // not in the bag) and "delivery" tokens with the corpus, so TF-IDF scores it
+  // ~0.456 — just OVER the floor. It is NOT a clean G5 demo. Documented so we
+  // don't reach for it on stage.
+  it("'threw the bag' string sits just above the floor — do not demo it", async () => {
+    const c = await run("delivery person was rude and threw the bag at my door");
+    expect(c.topSimilarity).toBeGreaterThanOrEqual(0.45);
+  });
 });

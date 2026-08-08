@@ -41,10 +41,6 @@ export function applyGuardrails(
   const action = candidate.proposedAction;
   let amount = computeAmount(action, order);
   const results: GuardrailResult[] = [];
-  let vetoedBy: string | null = null;
-  const veto = (id: string) => {
-    if (!vetoedBy) vetoedBy = id;
-  };
 
   // G1 — no redelivery on a cancelled order (Scenario 4).
   if (action === "redelivery" && order.delivery_status === "cancelled") {
@@ -53,7 +49,6 @@ export function applyGuardrails(
       status: "veto",
       reason: `cannot redeliver order ${order.order_id} — it was cancelled`,
     });
-    veto("G1");
   } else {
     results.push({
       id: "G1",
@@ -106,7 +101,6 @@ export function applyGuardrails(
       status: "veto",
       reason: "escalation requires human review",
     });
-    veto("G4");
   } else {
     results.push({ id: "G4", status: "pass", reason: "not an escalation" });
   }
@@ -123,7 +117,6 @@ export function applyGuardrails(
         2,
       )} < ${THRESHOLDS.MIN_SIMILARITY}`,
     });
-    veto("G5");
   } else {
     results.push({
       id: "G5",
@@ -131,6 +124,21 @@ export function applyGuardrails(
       reason: `top similarity ${candidate.topSimilarity.toFixed(2)} ≥ ${THRESHOLDS.MIN_SIMILARITY}`,
     });
   }
+
+  // vetoedBy priority: G5 (weak evidence) outranks the rest. When evidence is
+  // too weak, the proposed action isn't trustworthy, so an escalation (G4) or
+  // cancelled-order (G1) veto derived from it is secondary — "evidence too
+  // weak" is the honest headline (Scenario 2). On the seeded data no ticket
+  // trips G5 (all match verbatim at 1.0), so G1/G4 keep their headlines there.
+  const fired = (id: string) =>
+    results.some((r) => r.id === id && r.status === "veto");
+  const vetoedBy = fired("G5")
+    ? "G5"
+    : fired("G1")
+      ? "G1"
+      : fired("G4")
+        ? "G4"
+        : null;
 
   return { action, amountInr: amount, results, vetoedBy };
 }

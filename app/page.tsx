@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { TicketCard } from "@/components/TicketCard";
-import type { BoardCard, BoardResponse } from "@/lib/types";
+import type { BoardCard, BoardResponse, Decision } from "@/lib/types";
 
 type Status = "loading" | "ready" | "error";
 
@@ -70,6 +70,8 @@ export default function Home() {
         </div>
       </header>
 
+      <SubmitBox onSubmitted={() => void load()} />
+
       {status === "loading" && <p className="subtitle">Loading board…</p>}
       {status === "error" && (
         <p className="veto-banner">Could not load board: {error}</p>
@@ -92,6 +94,75 @@ export default function Home() {
         </div>
       )}
     </main>
+  );
+}
+
+function SubmitBox({ onSubmitted }: { onSubmitted: () => void }) {
+  const [desc, setDesc] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<Decision | null>(null);
+  const [err, setErr] = useState("");
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const description = desc.trim();
+    if (!description || busy) return;
+    setBusy(true);
+    setErr("");
+    setResult(null);
+    try {
+      const res = await fetch("/api/tickets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
+      setResult(json.decision as Decision);
+      setDesc("");
+      onSubmitted();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="submit-box">
+      <p className="submit-title">Submit a live ticket</p>
+      <p className="submit-sub">
+        Type a complaint the system has never seen — a truly novel one is routed
+        to a human on weak evidence (G5). Try “app crashed and charged me twice
+        for the same order”.
+      </p>
+      <form className="submit-row" onSubmit={submit}>
+        <input
+          className="submit-input"
+          value={desc}
+          onChange={(e) => setDesc(e.target.value)}
+          placeholder="Describe the issue…"
+          aria-label="Ticket description"
+        />
+        <button className="btn" type="submit" disabled={busy || !desc.trim()}>
+          {busy ? "Processing…" : "Submit"}
+        </button>
+      </form>
+
+      {err && <p className="submit-result submit-error">Error: {err}</p>}
+      {result && (
+        <p className={`submit-result ${result.lane}`}>
+          <span className="lane-tag">
+            {result.lane === "auto" ? "Auto-resolved" : "Needs human review"}
+          </span>{" "}
+          → {result.action}
+          {result.amountInr !== null ? ` ₹${result.amountInr}` : ""} · similarity{" "}
+          {result.topSimilarity.toFixed(2)}
+          {result.vetoedBy ? ` · blocked by ${result.vetoedBy}` : ""}. See the
+          card on the board below.
+        </p>
+      )}
+    </section>
   );
 }
 
