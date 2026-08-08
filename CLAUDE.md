@@ -6,17 +6,24 @@ Auto-resolve routine support tickets by matching them against 300 historically r
 
 ---
 
-## Read these before writing code - These files are in the agent reference folder
+## Read these before writing code
 
 | File | When |
 |---|---|
-| `ARCHITECTURE.md` | Before touching pipeline, policy, or schema. It is the design contract. |
-| `DATA.md` | Before touching **any** CSV column name. Non-negotiable. |
-| `VALIDATION.md` | Before calling anything done. It is the test spec and the judging rubric. |
+| `PLAN.md` | **At the start of every session.** Sprint-by-sprint build order, time budget, stop-gates, cut priority. Tells you what to work on *now*. |
+| `agent-reference/ARCHITECTURE.md` | Before touching pipeline, policy, or schema. It is the design contract. |
+| `agent-reference/DATA.md` | Before touching **any** CSV column name. Non-negotiable. |
+| `agent-reference/VALIDATION.md` | Before calling anything done. It is the test spec and the judging rubric. |
+
+**Working rhythm:** open `PLAN.md` → find the current sprint → build only what that sprint lists → tick its boxes → check its Invariant Checkpoints → redeploy → next sprint. `PLAN.md` is a living document; tick tasks off as you go.
+
+**Stop-gates in `PLAN.md` are hard blockers.** Do not start Sprint 9 (bonus) until STOP-GATE 1 passes in full. Do not present until STOP-GATE 2 passes on the deployed URL.
 
 Do not re-derive the design. If code and `ARCHITECTURE.md` disagree, one is a bug — decide which, fix it, and update the doc in the same commit.
 
-**Stack:** Next.js (App Router, TypeScript) · Supabase/Postgres · Qdrant (optional, bonus) · Claude Haiku (replies only) · deploy to Vercel.
+**Stack:** Next.js (App Router, TypeScript) · Supabase/Postgres · Qdrant (optional, bonus) · any OpenAI-compatible LLM for replies only, default Groq free tier · deploy to Vercel.
+
+The LLM is accessed through **one** OpenAI-compatible client configured by `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL`. Do not import a provider-specific SDK — swapping providers must be an env change. Free tiers are rate-limited, so the reply batch throttles to `LLM_MAX_CONCURRENCY`, caches by `ticket_id`, and **falls back to templates on 429 or timeout**.
 
 ---
 
@@ -28,6 +35,8 @@ Verified against the real CSVs. Getting these wrong is the main way this build l
 2. **`resolved_tickets.csv` has NO refund amounts.** All ₹ figures are our policy, defined in `ARCHITECTURE.md` §2.3. Nothing is learned from data.
 3. **Cancelled orders are a STRING, not a flag:** `delivery_status === 'cancelled'`. There is no `is_cancelled`, no `cancelled`, no `status`. Writing `if (order.cancelled)` yields `undefined` and silently disables the most important guardrail.
 4. **All 30 incoming tickets are verbatim matches to history**, so similarity ≈ 1.0 for every one of them. **Confidence must never be similarity alone** — gate on vote margin or 100% auto-resolves and validation scenarios 2 and 3 fail live.
+5. **Vote over the whole matched cluster, never a top-10 slice.** Cluster members share identical text, so all score 1.0 and a `k=10` cut takes an arbitrary subset — "bread not in the bag" then auto-resolves in only 72% of runs and cards flap between lanes on refresh. Vote over everything ≥ `MIN_SIMILARITY`, cap `K=50`, tie-break `csat` DESC then `ticket_id` ASC. Display 3.
+6. **G5 tests `topSimilarity`, not `confidence`.** `confidence = topSimilarity × voteShare`, so a strong-but-split ticket (0.90 × 0.50 = 0.45) would be wrongly labelled "evidence too weak" when it is a disagreement case.
 
 **Canonical headers — copy from here, never from memory:**
 

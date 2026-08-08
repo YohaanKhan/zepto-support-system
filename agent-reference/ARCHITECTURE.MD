@@ -81,7 +81,7 @@ Two implementations, fused:
 
 ### 1.2 Precedent vote
 
-From the top **k = 10** precedents:
+Vote over **every precedent scoring ≥ `MIN_SIMILARITY`**, capped at `K = 50`. Not the top 10 — see the warning below.
 
 ```
 weight(p) = similarity(p) × csat(p)
@@ -92,12 +92,14 @@ margin = share − share(runner-up)
 
 CSAT weighting means resolutions the customer actually rated well count more. CSAT in this dataset only spans 3–5 (see DATA.md §1), so it is a **tiebreaker, not a dominant term** — do not over-claim its effect to judges.
 
+> ⚠️ **Why the whole cluster votes, not the top 10.** Every row in a cluster shares the *identical* description, so all of them score similarity 1.0. A `k = 10` cut would take an arbitrary 10 of a 13–27 row cluster, and the vote share would depend on database row order. Measured over 3,000 random draws, "bread not in the bag" swings between share 0.51 and 1.00 and auto-resolves in only **72%** of draws — the 11/19 board would not be reproducible and cards would move lanes on refresh. Voting over everything above the similarity floor makes shares match DATA.md §1.3 exactly and makes the result deterministic. Ties are broken by `csat` DESC then `ticket_id` ASC. The UI still shows only the top 3.
+
 **Output — `Candidate`:**
 
 ```ts
 type Candidate = {
   ticketId: string
-  precedents: ScoredPrecedent[]   // top 10; top 3 surface in the UI
+  precedents: ScoredPrecedent[]   // all above the similarity floor; top 3 surface in the UI
   proposedAction: ResolutionAction
   topSimilarity: number           // similarity of rank-1 precedent
   voteShare: number               // 0..1
@@ -139,7 +141,7 @@ export const THRESHOLDS = {
   MIN_SIMILARITY: 0.45,   // below this the ticket is "novel"
   MIN_VOTE_SHARE: 0.60,   // precedents must actually agree
   MIN_VOTE_MARGIN: 0.15,  // and must beat the runner-up clearly
-  K: 10,
+  K: 50,                  // cap; the real cut is the MIN_SIMILARITY floor
 } as const
 ```
 
@@ -165,7 +167,7 @@ Each guardrail is a pure function `(action, order, candidate) => GuardrailResult
 | **G2** | refund amount ≤ `order.value_inr` | **mutate** (clamp) | Validation scenario 1: "a refund no larger than the order value". Hard cap; also the answer to "what stops a runaway refund". |
 | **G3** | `partial_refund` amount = `floor(value_inr / items)` | **mutate** (set amount) | History records *no* refund amounts (DATA.md §1.2) — the per-item average is our stated, documented assumption, not a learned value. |
 | **G4** | `escalation` may never auto-execute | **veto** → human lane | Escalation means "a human must look". Auto-escalating is a contradiction. |
-| **G5** | `confidence < MIN_SIMILARITY` ⇒ no action of any kind is proposed as final | **veto** → human lane | Validation scenario 2: "never acts on weak evidence". |
+| **G5** | `candidate.topSimilarity < MIN_SIMILARITY` ⇒ no action is proposed as final | **veto** → human lane | Validation scenario 2: "never acts on weak evidence". **Test `topSimilarity`, not `confidence`** — since `confidence = topSimilarity × voteShare`, a strongly-matched but split ticket (sim 0.90 × share 0.50 = 0.45) would trip a confidence-based check and be mislabelled "weak evidence" when it is really a *disagreement* case (scenario 3). |
 
 Amount rules, stated once so nothing else invents them:
 
@@ -188,7 +190,7 @@ type Decision = {
   voteShare: number
   voteMargin: number
   topSimilarity: number
-  precedentIds: string[]          // ordered, top 10
+  precedentIds: string[]          // ordered, all voters
   guardrails: GuardrailResult[]   // every rule evaluated, pass or not
   vetoedBy: string | null         // e.g. 'G1'
   reasoning: string               // deterministic, template-built — NOT LLM
