@@ -244,7 +244,11 @@ tickets            ticket_id PK, created_at timestamptz, order_id FK, descriptio
 decisions          id PK, ticket_id FK, lane, action, amount_inr,
                    confidence, vote_share, vote_margin, top_similarity,
                    precedent_ids text[], guardrails jsonb, vetoed_by,
-                   reasoning, draft_reply, reply_source, created_at
+                   reasoning, draft_reply, reply_source, created_at,
+                   top_precedents jsonb   -- [{ticketId,similarity,action,csat}]
+                                          -- top-3, so the board shows precedent
+                                          -- similarity without re-inference
+                                          -- (migration 0002)
 
 actions            id PK, decision_id FK, type, amount_inr,
                    status, idempotency_key UNIQUE, created_at

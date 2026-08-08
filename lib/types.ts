@@ -174,3 +174,44 @@ export interface Decision {
   draftReply?: string; // Sprint 4/8
   replySource?: "llm" | "template"; // Sprint 4/8
 }
+
+// ── Board / API view types (Sprint 6) ──────────────────────────────────────
+
+/** A top-3 precedent as persisted on the decision and shown on the card. */
+export interface PrecedentView {
+  ticketId: string;
+  similarity: number;
+  action: ResolutionAction;
+  csat: number;
+}
+
+/** Everything one board card needs, assembled by GET /api/board. */
+export interface BoardCard {
+  ticketId: string;
+  description: string;
+  order: {
+    orderId: string;
+    items: number;
+    valueInr: number;
+    deliveryStatus: DeliveryStatus;
+  } | null;
+  lane: "auto" | "human";
+  action: ResolutionAction;
+  amountInr: number | null;
+  confidence: number;
+  voteShare: number;
+  voteMargin: number;
+  topSimilarity: number;
+  guardrails: GuardrailResult[];
+  vetoedBy: string | null;
+  reasoning: string;
+  draftReply: string | null;
+  replySource: "llm" | "template" | null;
+  precedents: PrecedentView[];
+}
+
+export interface BoardResponse {
+  autoResolved: BoardCard[];
+  needsHuman: BoardCard[];
+  counts: { auto: number; human: number; total: number };
+}
