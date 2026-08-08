@@ -1,10 +1,12 @@
-import type { Decision, OrderRow } from "@/lib/types";
+import type { Decision, OrderRow, ScoredPrecedent } from "@/lib/types";
 import { generateTemplateReply, type ReplyTicket } from "./templates";
+import { generateLLMReply } from "./llm";
 
-// Stage 3 — Reply-writer. The ONLY stage that will call an LLM (Sprint 8). For
-// now it is template-only. Kept OUT of makeDecision so Policy stays pure and
-// model-free (Invariant #2) — the Sprint 6 pipeline calls this after the
-// decision is made and attaches the result to draftReply / replySource.
+// Stage 3 — Reply-writer (Sprint 8).
+//
+// Flow: try LLM → on ANY failure (missing key, 429, timeout, network) log a
+// warning and fall back to the deterministic template. The demo must survive a
+// dead LLM key (Invariant #10). Only this module calls an LLM (Invariant #2).
 
 export type ReplySource = "llm" | "template";
 
@@ -14,13 +16,37 @@ export interface ReplyResult {
 }
 
 /**
- * Produce the customer reply for a decision. Sprint 8 will try the LLM here
- * first and fall back to the template on any failure; today it is template-only.
+ * Generate a customer reply for the given decision.
+ *
+ * Tries the LLM path first. Falls back to a deterministic template on any
+ * error — missing API key, HTTP 429, timeout, or empty response.
+ *
+ * @param topPrecedents  The top-3 scored precedents from triage — forwarded to
+ *                        the LLM prompt so it can reference similar past cases.
  */
 export async function generateReply(
   decision: Decision,
   ticket: ReplyTicket,
   order?: OrderRow,
+  topPrecedents?: ScoredPrecedent[],
 ): Promise<ReplyResult> {
-  return { reply: generateTemplateReply(decision, ticket, order), source: "template" };
+  try {
+    const llmReply = await generateLLMReply(
+      decision,
+      ticket.description ?? "",
+      order,
+      topPrecedents ?? [],
+    );
+    return { reply: llmReply, source: "llm" };
+  } catch (err) {
+    console.warn(
+      `[reply] LLM failed for ${ticket.ticketId}, using template fallback:`,
+      err instanceof Error ? err.message : err,
+    );
+    return {
+      reply: generateTemplateReply(decision, ticket, order),
+      source: "template",
+    };
+  }
 }
+

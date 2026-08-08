@@ -41,11 +41,13 @@ export async function processTicket(ticketId: string): Promise<Decision> {
   const candidate = await triage(ticketId, t.description, retriever);
   const decision = makeDecision(candidate, order);
 
-  // Stage 3 — reply (template now; LLM in Sprint 8, with template fallback).
+  // Stage 3 — reply (LLM with template fallback, Sprint 8).
+  const top3 = candidate.precedents.slice(0, 3);
   const { reply, source } = await generateReply(
     decision,
-    { ticketId, orderId: order.order_id },
+    { ticketId, orderId: order.order_id, description: t.description },
     order,
+    top3,
   );
   decision.draftReply = reply;
   decision.replySource = source;

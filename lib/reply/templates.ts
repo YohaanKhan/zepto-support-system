@@ -7,10 +7,11 @@ import type { Decision, OrderRow, ResolutionAction } from "@/lib/types";
 
 const DRAFT_PREFIX = "[DRAFT — AWAITING APPROVAL] ";
 
-/** The minimal ticket shape a reply needs. */
+/** The ticket shape a reply needs. `description` feeds the LLM prompt (Sprint 8). */
 export interface ReplyTicket {
   ticketId: string;
   orderId: string;
+  description?: string;
 }
 
 function body(
