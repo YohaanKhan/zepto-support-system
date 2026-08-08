@@ -293,14 +293,14 @@ export default function Home() {
                   <h1 id="board-title">Resolution command center</h1>
                   <p>Every decision is grounded in historical precedents and checked by deterministic policy guardrails.</p>
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
-                  <span className="savings-badge" title="Auto-resolved × 25 median agent-minutes">
-                    <Icon name="clock" /> <b>{savings}</b> agent-min saved
-                  </span>
+                <div className="heading-badges">
                   {liveEnabled && (
                     <span className="realtime-pill"><i /> Live</span>
                   )}
                   <div className="heading-badge"><Icon name="shield" /> Auditable decisions</div>
+                  <span className="savings-badge" title="Auto-resolved × 25 median agent-minutes">
+                    <Icon name="clock" /> <b>{savings}</b> agent-min saved
+                  </span>
                 </div>
               </div>
 
