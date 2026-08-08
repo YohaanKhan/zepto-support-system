@@ -1060,24 +1060,88 @@ svg {
 }
 
 .ticket-description {
-  display: -webkit-box;
-  margin: 9px 0;
-  overflow: hidden;
+  display: block;
+  margin: 11px 0;
   color: var(--text-soft);
-  font-size: 11px;
-  font-weight: 620;
-  line-height: 1.42;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
+  line-height: 1.5;
+}
+
+.ticket-description em,
+.ticket-description strong {
+  display: block;
 }
 
 .ticket-description em {
-  margin-right: 5px;
+  margin-bottom: 3px;
   color: var(--faint);
-  font-size: 9px;
+  font-size: 10px;
   font-style: normal;
-  font-weight: 600;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ticket-description strong {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.48;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.order-context-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: -1px 0 10px;
+}
+
+.order-context-row > span {
+  display: flex;
+  min-height: 37px;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.order-context-row b,
+.order-context-row small {
+  display: block;
+}
+
+.order-context-row b {
+  color: var(--text-soft);
+  font-size: 12px;
+  text-transform: capitalize;
+}
+
+.order-context-row small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.order-context-row .delivery-delivered {
+  border-color: #b7ead4;
+  background: var(--success-soft);
+}
+
+.order-context-row .delivery-delivered b {
+  color: var(--success);
+}
+
+.order-context-row .delivery-cancelled {
+  border-color: #fecaca;
+  background: var(--danger-soft);
+}
+
+.order-context-row .delivery-cancelled b {
+  color: var(--danger);
 }
 
 .ticket-veto {
@@ -1108,6 +1172,107 @@ svg {
   font-size: 8px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.decision-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+
+.decision-fact {
+  min-width: 0;
+  padding: 8px 9px;
+  border-left: 1px solid var(--border);
+}
+
+.decision-fact:first-child {
+  border-left: 0;
+}
+
+.decision-fact-wide {
+  grid-column: 1 / -1;
+  border-bottom: 1px solid var(--border);
+  border-left: 0;
+}
+
+.decision-fact-wide + .decision-fact {
+  border-left: 0;
+}
+
+.decision-fact small,
+.decision-fact strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.decision-fact small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.decision-fact strong {
+  margin-top: 3px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.ticket-detail-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.ticket-detail-row > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ticket-detail-row svg {
+  width: 13px;
+  flex: 0 0 13px;
+}
+
+.card-decision-outcome {
+  color: var(--success);
+}
+
+.outcome-human,
+.outcome-mutate {
+  color: var(--warning);
+}
+
+.outcome-veto {
+  color: var(--danger);
+}
+
+.precedent-count {
+  white-space: nowrap;
+}
+
+.open-details {
+  margin-left: auto;
+  color: var(--brand);
+  white-space: nowrap;
+}
+
+.open-details svg {
+  transition: transform 150ms ease;
+}
+
+.ticket-card:hover .open-details svg {
+  transform: translateX(2px);
 }
 
 .ticket-footer {
@@ -2890,6 +3055,26 @@ svg {
 
   .ticket-visual {
     display: none;
+  }
+
+  .decision-facts {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .decision-fact-wide {
+    grid-column: 1 / -1;
+    border-bottom: 1px solid var(--border);
+    border-left: 0;
+  }
+
+  .ticket-detail-row {
+    flex-wrap: wrap;
+  }
+
+  .open-details {
+    width: 100%;
+    margin-left: 0;
+    padding-top: 2px;
   }
 
   .ticket-footer {

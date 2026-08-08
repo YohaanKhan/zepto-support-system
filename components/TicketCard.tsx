@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { Icon } from "@/components/Icon";
 import type { BoardCard, ResolutionAction } from "@/lib/types";
 
@@ -29,9 +30,9 @@ export function TicketCard({
   const outcomeDetail = veto
     ? `Blocked by ${card.vetoedBy ?? veto.id}`
     : mutation
-      ? "Policy-adjusted action"
+      ? "Policy adjusted"
       : isAuto
-        ? "Policy checks passed"
+        ? "All guardrails passed"
         : "Approval required";
 
   return (
@@ -39,22 +40,24 @@ export function TicketCard({
       type="button"
       className={`ticket-card ${active ? "active" : ""}`}
       onClick={onSelect}
-      style={{ "--card-delay": `${Math.min(index, 8) * 35}ms` } as React.CSSProperties}
+      style={{ "--card-delay": `${Math.min(index, 8) * 35}ms` } as CSSProperties}
       aria-label={`Open ${card.ticketId}: ${card.description}`}
     >
       <span className={`ticket-visual visual-${card.lane}`}>
         <Icon name={isAuto ? "check" : "alert"} />
-        <small>AI</small>
+        <small>Confidence</small>
         <b>{formatPercent(card.confidence)}</b>
       </span>
 
       <span className="ticket-content">
         <span className="ticket-meta-row">
           <span className="ticket-identity">
-            <span className={`ticket-lane-icon lane-icon-${card.lane}`}><Icon name={isAuto ? "check" : "alert"} /></span>
+            <span className={`ticket-lane-icon lane-icon-${card.lane}`}>
+              <Icon name={isAuto ? "check" : "alert"} />
+            </span>
             <span>
               <strong>{card.ticketId}</strong>
-              <small>{card.order ? `Order ${card.order.orderId}` : "Ad-hoc support ticket"}</small>
+              {card.order && <small>Order {card.order.orderId}</small>}
             </span>
           </span>
           <span className={`status-badge status-${card.lane}`}>
@@ -62,25 +65,57 @@ export function TicketCard({
           </span>
         </span>
 
-        <span className="ticket-description"><em>Issue</em>{card.description}</span>
+        <span className="ticket-description">
+          <em>Customer issue</em>
+          <strong>{card.description || "No description was provided for this ticket."}</strong>
+        </span>
 
-        {veto && (
-          <span className="ticket-veto"><Icon name="shield" /><span><b>{card.vetoedBy ?? veto.id} veto</b>{veto.reason}</span></span>
+        {card.order && (
+          <span className="order-context-row" aria-label={`Order ${card.order.orderId} context`}>
+            <span><b>₹{card.order.valueInr}</b><small>order value</small></span>
+            <span><b>{card.order.items}</b><small>{card.order.items === 1 ? "item" : "items"}</small></span>
+            <span className={`delivery-chip delivery-${card.order.deliveryStatus}`}>
+              <b>{card.order.deliveryStatus}</b><small>delivery</small>
+            </span>
+          </span>
         )}
 
-        <span className="ticket-footer">
-          <span className="action-summary">
-            <small>{isAuto ? "Selected action" : "Suggested action"}</small>
-            <strong>{formatAction(card.action)}{card.amountInr !== null ? ` · ₹${card.amountInr}` : ""}</strong>
+        {veto && (
+          <span className="ticket-veto">
+            <Icon name="shield" />
+            <span><b>{card.vetoedBy ?? veto.id} policy veto</b>{veto.reason}</span>
           </span>
-          <span className="confidence-summary">
-            <small>Confidence</small>
-            <span><i><i style={{ width: formatPercent(card.confidence) }} /></i><b>{formatPercent(card.confidence)}</b></span>
+        )}
+
+        <span className="decision-facts">
+          <DecisionFact
+            label={isAuto ? "Selected action" : "Suggested action"}
+            value={`${formatAction(card.action)}${card.amountInr !== null ? ` · ₹${card.amountInr}` : ""}`}
+            wide
+          />
+          <DecisionFact label="Top match" value={formatPercent(card.topSimilarity)} />
+          <DecisionFact label="Vote share" value={formatPercent(card.voteShare)} />
+          <DecisionFact label="Vote margin" value={formatPercent(card.voteMargin)} />
+        </span>
+
+        <span className="ticket-detail-row">
+          <span className={`card-decision-outcome outcome-${veto ? "veto" : mutation ? "mutate" : card.lane}`}>
+            <Icon name={veto ? "alert" : "shield"} />
+            {outcomeDetail}
           </span>
-          <span className="evidence-summary"><Icon name="layers" /><span><b>{Math.min(card.precedents.length, 3)}</b><small>precedents</small></span></span>
-          <span className="ticket-outcome"><small>{outcomeDetail}</small><Icon name="chevron" /></span>
+          <span className="precedent-count"><Icon name="layers" /> {Math.min(card.precedents.length, 3)} precedents</span>
+          <span className="open-details">View evidence <Icon name="chevron" /></span>
         </span>
       </span>
     </button>
+  );
+}
+
+function DecisionFact({ label, value, wide = false }: { label: string; value: string; wide?: boolean }) {
+  return (
+    <span className={`decision-fact ${wide ? "decision-fact-wide" : ""}`}>
+      <small>{label}</small>
+      <strong>{value}</strong>
+    </span>
   );
 }
