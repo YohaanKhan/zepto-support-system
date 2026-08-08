@@ -187,6 +187,8 @@ export interface PrecedentView {
 
 /** Everything one board card needs, assembled by GET /api/board. */
 export interface BoardCard {
+  /** The persisted decision row id — needed to approve/override (Sprint 11). */
+  decisionId: string;
   ticketId: string;
   description: string;
   order: {
@@ -214,4 +216,14 @@ export interface BoardResponse {
   autoResolved: BoardCard[];
   needsHuman: BoardCard[];
   counts: { auto: number; human: number; total: number };
+  /** Agent-minutes saved by the auto-resolved lane (Sprint 10). */
+  savings: number;
+  /** Which retriever produced these decisions: 'tfidf' | 'hybrid' (Sprint 13). */
+  retriever: string;
+  /** The threshold set applied to this partition (defaults unless replayed). */
+  thresholds: {
+    minSimilarity: number;
+    minVoteShare: number;
+    minVoteMargin: number;
+  };
 }
