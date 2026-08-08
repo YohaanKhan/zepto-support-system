@@ -2348,6 +2348,288 @@ svg {
   transform: rotate(-90deg);
 }
 
+/* Readable dashboard type scale */
+.system-status,
+.live-dot,
+.breadcrumbs,
+.filter-tab,
+.icon-button,
+.primary-button,
+.secondary-button {
+  font-size: 13px;
+}
+
+.search-field input,
+.submit-panel input {
+  font-size: 14px;
+}
+
+.eyebrow,
+.section-kicker {
+  font-size: 11px;
+}
+
+.page-heading > div > p:last-child {
+  font-size: 14px;
+}
+
+.heading-badge,
+.notice {
+  font-size: 13px;
+}
+
+.filter-tab span {
+  font-size: 11px;
+}
+
+.submit-copy h2 {
+  font-size: 15px;
+}
+
+.submit-copy p,
+.submit-error {
+  font-size: 12px;
+}
+
+.lane-title h2 {
+  font-size: 15px;
+}
+
+.lane-title p,
+.lane-empty p {
+  font-size: 12px;
+}
+
+.lane-header > b {
+  font-size: 12px;
+}
+
+.ticket-visual small {
+  font-size: 10px;
+}
+
+.ticket-visual b {
+  font-size: 16px;
+}
+
+.ticket-identity strong {
+  font-size: 13px;
+}
+
+.ticket-identity small {
+  font-size: 11px;
+}
+
+.status-badge {
+  font-size: 11px;
+}
+
+.ticket-description {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.ticket-description em {
+  font-size: 11px;
+}
+
+.ticket-veto span {
+  font-size: 11px;
+}
+
+.ticket-veto b {
+  font-size: 10px;
+}
+
+.action-summary small,
+.confidence-summary small {
+  font-size: 10px;
+}
+
+.action-summary strong {
+  font-size: 12px;
+}
+
+.confidence-summary b {
+  font-size: 11px;
+}
+
+.evidence-summary b {
+  font-size: 12px;
+}
+
+.evidence-summary small {
+  font-size: 10px;
+}
+
+.rail-heading h2 {
+  font-size: 16px;
+}
+
+.kpi-card strong {
+  font-size: 22px;
+}
+
+.kpi-card small {
+  font-size: 11px;
+}
+
+.rail-card-title h3 {
+  font-size: 13px;
+}
+
+.rail-card-title p {
+  font-size: 10px;
+}
+
+.corpus-number small,
+.corpus-card > p {
+  font-size: 11px;
+}
+
+.workflow-card li strong {
+  font-size: 12px;
+}
+
+.workflow-card li small {
+  font-size: 10px;
+}
+
+.create-ticket-cta strong {
+  font-size: 13px;
+}
+
+.create-ticket-cta small {
+  font-size: 10px;
+}
+
+.error-state p {
+  font-size: 13px;
+}
+
+.drawer-title-row h2 {
+  font-size: 16px;
+}
+
+.drawer-header > div > p {
+  font-size: 13px;
+}
+
+.pipeline-step b {
+  font-size: 10px;
+}
+
+.pipeline-step small {
+  font-size: 9px;
+}
+
+.halt-panel h3 {
+  font-size: 14px;
+}
+
+.halt-panel p:last-child {
+  font-size: 12px;
+}
+
+.drawer-section > header h3 {
+  font-size: 14px;
+}
+
+.drawer-section > header p {
+  font-size: 11px;
+}
+
+.decision-outcome > small {
+  font-size: 10px;
+}
+
+.decision-outcome p {
+  font-size: 11px;
+}
+
+.metric small {
+  font-size: 10px;
+}
+
+.metric strong {
+  font-size: 13px;
+}
+
+.evidence-anchor {
+  font-size: 11px;
+}
+
+.evidence-anchor > strong {
+  font-size: 9px;
+}
+
+.precedent-rank {
+  font-size: 10px;
+}
+
+.precedent-copy b {
+  font-size: 12px;
+}
+
+.precedent-copy small {
+  font-size: 11px;
+}
+
+.precedent-copy em {
+  font-size: 10px;
+}
+
+.precedent-score b {
+  font-size: 13px;
+}
+
+.guardrail-card p {
+  font-size: 10px;
+}
+
+.guardrail-card p b {
+  font-size: 12px;
+}
+
+.guardrail-card small {
+  font-size: 11px;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.reasoning-panel p {
+  font-size: 12px;
+}
+
+.order-info small {
+  font-size: 10px;
+}
+
+.order-info strong {
+  font-size: 13px;
+}
+
+.reply-toolbar > span,
+.reply-toolbar button {
+  font-size: 10px;
+}
+
+.reply-body p {
+  font-size: 12px;
+}
+
+.drawer-empty {
+  font-size: 12px;
+}
+
+.drawer-footer b {
+  font-size: 12px;
+}
+
+.drawer-footer small {
+  font-size: 10px;
+}
+
 /* Responsive */
 @media (max-width: 1180px) {
   .dashboard {
@@ -2507,7 +2789,7 @@ svg {
     border-radius: 12px;
     background: transparent;
     color: rgba(255, 255, 255, 0.58);
-    font-size: 7.5px;
+    font-size: 10px;
     font-weight: 700;
     cursor: pointer;
   }
