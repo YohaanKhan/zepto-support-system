@@ -2,19 +2,42 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/Icon";
+import type { IconName } from "@/components/Icon";
 import { formatAction, formatPercent } from "@/components/TicketCard";
-import type { BoardCard } from "@/lib/types";
+import { RESOLUTION_ACTIONS, type BoardCard, type ResolutionAction } from "@/lib/types";
 
-export function TicketDrawer({ card, onClose }: { card: BoardCard | null; onClose: () => void }) {
+type ActionResult = { ticketId: string; lane: "auto" | "human"; message: string };
+
+export function TicketDrawer({
+  card,
+  onClose,
+  onActioned,
+}: {
+  card: BoardCard | null;
+  onClose: () => void;
+  onActioned?: (result: ActionResult) => void | Promise<void>;
+}) {
   const [copied, setCopied] = useState(false);
   const [selectedPrecedentId, setSelectedPrecedentId] = useState<string | null>(null);
+  const [overrideOpen, setOverrideOpen] = useState(false);
+  const [overrideAction, setOverrideAction] = useState<ResolutionAction>("partial_refund");
+  const [overrideAmount, setOverrideAmount] = useState("");
+  const [actionBusy, setActionBusy] = useState<"approve" | "override" | null>(null);
+  const [actionError, setActionError] = useState("");
   const drawerRef = useRef<HTMLElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     setCopied(false);
     setSelectedPrecedentId(card?.precedents[0]?.ticketId ?? null);
-  }, [card?.ticketId, card?.precedents]);
+    setOverrideOpen(false);
+    setActionError("");
+    setActionBusy(null);
+    if (card) {
+      setOverrideAction(card.action);
+      setOverrideAmount(card.amountInr != null ? String(card.amountInr) : "");
+    }
+  }, [card?.ticketId, card?.precedents, card]);
 
   useEffect(() => {
     if (!card) return;
@@ -76,6 +99,41 @@ export function TicketDrawer({ card, onClose }: { card: BoardCard | null; onClos
       window.setTimeout(() => setCopied(false), 1600);
     } catch {
       setCopied(false);
+    }
+  }
+
+  async function submitDecision(approved: boolean) {
+    if (!card || actionBusy) return;
+    setActionBusy(approved ? "approve" : "override");
+    setActionError("");
+    try {
+      const body: Record<string, unknown> = {
+        approved,
+        reason: approved ? "Approved as proposed" : `Overridden to ${formatAction(overrideAction)}`,
+      };
+      if (!approved) {
+        body.overrideAction = overrideAction;
+        const amount = overrideAmount.trim();
+        if (amount) body.overrideAmount = Number(amount);
+      }
+      const response = await fetch(`/api/decisions/${card.decisionId}/override`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const json = await response.json();
+      if (!response.ok || !json.ok) throw new Error(json.error ?? `Request returned ${response.status}`);
+      const label = formatAction(json.finalAction as ResolutionAction);
+      const wb = json.wroteBack ? " and appended to the precedent corpus" : "";
+      const message = approved
+        ? `${card.ticketId} approved (${label})${wb}. Logged to the audit trail.`
+        : `${card.ticketId} overridden to ${label}${wb}. Logged to the audit trail.`;
+      await onActioned?.({ ticketId: card.ticketId, lane: card.lane, message });
+      onClose();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setActionBusy(null);
     }
   }
 
@@ -191,10 +249,76 @@ export function TicketDrawer({ card, onClose }: { card: BoardCard | null; onClos
               <div className="drawer-empty">No drafted reply is attached to this decision.</div>
             )}
           </DrawerSection>
+
+          <DrawerSection title="Human decision" icon="thumbsUp" subtitle="Approve the proposal or override it — every choice is appended to the audit log">
+            <div className="decision-actions">
+              <button
+                type="button"
+                className="approve-button"
+                onClick={() => void submitDecision(true)}
+                disabled={actionBusy !== null}
+              >
+                <Icon name="thumbsUp" /> {actionBusy === "approve" ? "Approving…" : `Approve ${formatAction(card.action)}`}
+              </button>
+              <button
+                type="button"
+                className="override-button"
+                onClick={() => setOverrideOpen((value) => !value)}
+                disabled={actionBusy !== null}
+                aria-expanded={overrideOpen}
+              >
+                <Icon name="pencil" /> Override
+              </button>
+            </div>
+
+            {overrideOpen && (
+              <div className="override-form">
+                <div className="override-form-row">
+                  <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                    <label htmlFor="override-action">New action</label>
+                    <select
+                      id="override-action"
+                      value={overrideAction}
+                      onChange={(event) => setOverrideAction(event.target.value as ResolutionAction)}
+                    >
+                      {RESOLUTION_ACTIONS.map((action) => (
+                        <option key={action} value={action}>{formatAction(action)}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                    <label htmlFor="override-amount">Amount ₹ (optional)</label>
+                    <input
+                      id="override-amount"
+                      type="number"
+                      min={0}
+                      value={overrideAmount}
+                      onChange={(event) => setOverrideAmount(event.target.value)}
+                      placeholder="e.g. 120"
+                    />
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="override-button"
+                  onClick={() => void submitDecision(false)}
+                  disabled={actionBusy !== null}
+                >
+                  <Icon name="check" /> {actionBusy === "override" ? "Submitting…" : "Submit override"}
+                </button>
+              </div>
+            )}
+
+            <p className="writeback-off-note">
+              <Icon name="lock" />
+              Corpus write-back is gated by ENABLE_WRITE_BACK (off during judging). Approve / override always writes the audit log.
+            </p>
+            {actionError && <p className="submit-error" role="alert">{actionError}</p>}
+          </DrawerSection>
         </div>
 
         <footer className="drawer-footer">
-          <div><span className={`footer-state state-${card.lane}`}><Icon name={isAuto ? "check" : "alert"} /></span><p><b>{isAuto ? "Auto-resolution approved" : "Awaiting human approval"}</b><small>{isAuto ? "Execution status is not exposed by the board API" : "Approve and override are not enabled without audited write-back"}</small></p></div>
+          <div><span className={`footer-state state-${card.lane}`}><Icon name={isAuto ? "check" : "alert"} /></span><p><b>{isAuto ? "Auto-resolution approved" : "Awaiting human approval"}</b><small>{isAuto ? "Simulated action recorded — no real payment call" : "A suggested action and drafted reply are attached for the agent"}</small></p></div>
           <button type="button" className="secondary-button" onClick={onClose}>Close details</button>
         </footer>
       </aside>
@@ -206,7 +330,7 @@ function PipelineStep({ number, label, detail, done = false, warning = false }: 
   return <div className={`pipeline-step ${done ? "done" : ""} ${warning ? "warning" : ""}`}><span>{done ? <Icon name="check" /> : warning ? <Icon name="alert" /> : number}</span><p><b>{label}</b><small>{detail}</small></p></div>;
 }
 
-function DrawerSection({ title, subtitle, icon, children }: { title: string; subtitle?: string; icon: "sparkles" | "layers" | "shield" | "package" | "ticket"; children: React.ReactNode }) {
+function DrawerSection({ title, subtitle, icon, children }: { title: string; subtitle?: string; icon: IconName; children: React.ReactNode }) {
   return <section className="drawer-section"><header><span><Icon name={icon} /></span><div><h3>{title}</h3>{subtitle && <p>{subtitle}</p>}</div></header>{children}</section>;
 }
 

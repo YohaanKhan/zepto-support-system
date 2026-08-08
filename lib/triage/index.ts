@@ -1,5 +1,7 @@
 import { THRESHOLDS } from "@/lib/policy/thresholds";
 import { loadPrecedentsFromSupabase } from "@/lib/retrieval/corpus";
+import { HybridRetriever } from "@/lib/retrieval/hybrid";
+import { QdrantRetriever } from "@/lib/retrieval/qdrant";
 import { TfIdfRetriever } from "@/lib/retrieval/tfidf";
 import type { Retriever } from "@/lib/retrieval/types";
 import type {
@@ -67,9 +69,33 @@ export async function triage(
 
 let cached: Promise<Retriever> | null = null;
 
+/**
+ * Build the runtime retriever. TF-IDF is always constructed (it is the fallback
+ * and can never fail on 300 in-memory docs). When RETRIEVER=hybrid we wrap it
+ * with a Qdrant dense retriever fused by RRF — but if the Qdrant client can't
+ * even be constructed (no QDRANT_URL, bad env), we log and stay on TF-IDF.
+ * A Qdrant that is configured-but-unreachable degrades per-request inside
+ * HybridRetriever (Invariant #10).
+ */
 export function getRetriever(): Promise<Retriever> {
   if (!cached) {
-    cached = loadPrecedentsFromSupabase().then((p) => new TfIdfRetriever(p));
+    cached = loadPrecedentsFromSupabase().then((precedents) => {
+      const tfidf = new TfIdfRetriever(precedents);
+      const mode = (process.env.RETRIEVER ?? "tfidf").toLowerCase();
+      if (mode !== "hybrid") return tfidf;
+      try {
+        // QdrantRetriever() throws if QDRANT_URL is unset; a configured-but-dead
+        // Qdrant instead degrades per-request inside HybridRetriever.
+        return new HybridRetriever(tfidf, new QdrantRetriever());
+      } catch (err) {
+        console.warn(
+          `[triage] RETRIEVER=hybrid requested but Qdrant is unavailable; using TF-IDF. ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        return tfidf;
+      }
+    });
   }
   return cached;
 }

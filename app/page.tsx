@@ -1,541 +1,482 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useState } from "react";
 import type { CSSProperties } from "react";
 import { Icon } from "@/components/Icon";
 import type { IconName } from "@/components/Icon";
-import { TicketCard, formatAction, formatPercent } from "@/components/TicketCard";
-import { TicketDrawer } from "@/components/TicketDrawer";
-import type { BoardCard, BoardResponse, Decision, ResolutionAction } from "@/lib/types";
+import { LogoMark, LogoWordmark } from "@/components/Logo";
+import { DEFAULT_REPLAY_THRESHOLDS, laneAtThresholds } from "@/lib/policy/replay";
 
-type LoadStatus = "loading" | "ready" | "error";
-type LaneFilter = "all" | "auto" | "human";
-type AppView = "board" | "health";
-type Notice = { tone: "success" | "error"; message: string } | null;
+// The presentation homepage. A single scrollable narrative of the system —
+// problem, pipeline, guardrails, the data gotchas, the stack, and the build
+// plan — with a few interactive pieces (clickable pipeline, a live gate
+// simulator). Everything here is sourced from the repo's own docs so the
+// homepage never drifts from the code.
 
-export default function Home() {
-  const [data, setData] = useState<BoardResponse | null>(null);
-  const [status, setStatus] = useState<LoadStatus>("loading");
-  const [notice, setNotice] = useState<Notice>(null);
-  const [busyAction, setBusyAction] = useState<"refresh" | "pipeline" | null>(null);
-  const [ticketSubmitting, setTicketSubmitting] = useState(false);
-  const [view, setView] = useState<AppView>("board");
-  const [query, setQuery] = useState("");
-  const [laneFilter, setLaneFilter] = useState<LaneFilter>("all");
-  const [showSubmit, setShowSubmit] = useState(false);
-  const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
+const STAGES: {
+  id: string;
+  n: string;
+  title: string;
+  icon: IconName;
+  tagline: string;
+  detail: string;
+  points: string[];
+}[] = [
+  {
+    id: "retrieve",
+    n: "01",
+    title: "Retrieve",
+    icon: "layers",
+    tagline: "Find the evidence",
+    detail:
+      "TF-IDF over unigrams + bigrams of 300 historical tickets, ranked by cosine similarity. ~40 lines of TypeScript — no Python service, no black box.",
+    points: [
+      "Indexes descriptions only — never resolution_note (it leaks the label)",
+      "Votes over the whole cluster ≥ MIN_SIMILARITY, capped at K = 50",
+      "Optional Qdrant dense retrieval, fused with RRF, degrades to TF-IDF",
+    ],
+  },
+  {
+    id: "vote",
+    n: "02",
+    title: "Vote",
+    icon: "scale",
+    tagline: "Measure agreement",
+    detail:
+      "Each precedent votes for its action with weight = similarity × CSAT. We sum by action to get a share and a margin over the runner-up.",
+    points: [
+      "Confidence = topSimilarity × voteShare",
+      "Deterministic tie-break: CSAT desc, then ticket_id asc",
+      "A 7–7 split has margin 0.00 and can never auto-resolve",
+    ],
+  },
+  {
+    id: "guard",
+    n: "03",
+    title: "Guard",
+    icon: "shield",
+    tagline: "Apply policy",
+    detail:
+      "Five deterministic guardrails (G1–G5) run before anything is routed. They veto, clamp, or compute — the model is never in this path.",
+    points: [
+      "No redelivery on a cancelled order (G1)",
+      "No refund ever exceeds the order value (G2)",
+      "Escalation never auto-executes (G4)",
+    ],
+  },
+  {
+    id: "route",
+    n: "04",
+    title: "Route",
+    icon: "target",
+    tagline: "Decide the lane",
+    detail:
+      "Auto-resolve only when every gate holds AND no guardrail vetoed. Otherwise the ticket is queued for a human — with a drafted reply and precedents attached either way.",
+    points: [
+      "Auto iff topSim ≥ 0.45 · share ≥ 0.60 · margin ≥ 0.15 · no veto",
+      "Every action is simulated with an idempotency key",
+      "The 30 shipped tickets split 11 auto / 19 human",
+    ],
+  },
+];
 
-  const load = useCallback(async (showBusy = false) => {
-    if (showBusy) setBusyAction("refresh");
-    try {
-      const response = await fetch("/api/board", { cache: "no-store" });
-      const json = await response.json();
-      if (!response.ok) {
-        throw new Error(json.error ?? `GET /api/board returned ${response.status}`);
-      }
-      setData(json as BoardResponse);
-      setStatus("ready");
-      setNotice(null);
-      return true;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatus((current) => (current === "loading" ? "error" : current));
-      setNotice({ tone: "error", message: `Could not load the board: ${message}` });
-      return false;
-    } finally {
-      if (showBusy) setBusyAction(null);
-    }
-  }, []);
+const GUARDRAILS: { id: string; kind: string; title: string; body: string; icon: IconName }[] = [
+  { id: "G1", kind: "veto", title: "Cancelled-order redelivery", body: "delivery_status === 'cancelled' blocks a redelivery action. It's a string, not a flag.", icon: "package" },
+  { id: "G2", kind: "mutate", title: "Refund cap", body: "clampRefund() clamps any amount to order.value_inr. The AI never picks the number.", icon: "scale" },
+  { id: "G3", kind: "compute", title: "Partial refund", body: "floor(value_inr / items), clamped to the order value. Pure arithmetic from policy.", icon: "target" },
+  { id: "G4", kind: "veto", title: "No auto-escalation", body: "escalation always requires a human. It can never auto-execute.", icon: "users" },
+  { id: "G5", kind: "veto", title: "Weak evidence", body: "topSimilarity < 0.45 → novel ticket → human lane. Tests similarity, not confidence.", icon: "eye" },
+];
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+const FACTS: { title: string; body: string }[] = [
+  { title: "History has no order_id", body: "resolved_tickets.csv cannot be joined to orders. You cannot learn context-conditioned policy — so we don't try to." },
+  { title: "History has no ₹ amounts", body: "Every refund figure is our policy, defined once in code. Nothing about money is learned from the data." },
+  { title: "'cancelled' is a string", body: "There is no is_cancelled boolean. The guardrail tests delivery_status === 'cancelled' — writing if (order.cancelled) silently disables G1." },
+  { title: "Every incoming ticket is a verbatim match", body: "Similarity ≈ 1.0 for all 30. Gating on similarity alone would auto-resolve 100% — so confidence gates on vote margin and share too." },
+];
 
-  const allCards = useMemo(
-    () => [...(data?.autoResolved ?? []), ...(data?.needsHuman ?? [])],
-    [data],
-  );
+const STACK: { name: string; role: string; icon: IconName }[] = [
+  { name: "Next.js + TypeScript", role: "App Router UI & API routes", icon: "code" },
+  { name: "Supabase / Postgres", role: "Source of truth — 6 tables", icon: "database" },
+  { name: "TF-IDF retriever", role: "Sparse similarity, in-process", icon: "layers" },
+  { name: "Qdrant (optional)", role: "Dense vectors, RRF hybrid", icon: "network" },
+  { name: "OpenAI-compatible LLM", role: "Reply prose only — Groq default", icon: "message" },
+  { name: "Vercel", role: "Public deploy from ~60% done", icon: "zap" },
+];
 
-  const selectedTicket = useMemo(
-    () => allCards.find((card) => card.ticketId === selectedTicketId) ?? null,
-    [allCards, selectedTicketId],
-  );
+const SCENARIOS: { n: string; title: string; body: string; result: string; tone: "auto" | "human" }[] = [
+  { n: "1", title: "Strong precedents", body: "“bread not in the bag” — 17 precedents agree on partial_refund.", result: "Auto · ₹82 (capped)", tone: "auto" },
+  { n: "2", title: "Novel complaint", body: "“delivery person was rude” — nothing in history is close.", result: "Human · G5 weak evidence", tone: "human" },
+  { n: "3", title: "Precedents disagree", body: "“curd delivered warm and spoiled” — an exact 7–7 tie.", result: "Human · margin 0.00", tone: "human" },
+  { n: "4", title: "Cancelled order", body: "“wrong brand of rice” on a cancelled order.", result: "Human · G1 veto", tone: "human" },
+];
 
-  const filteredCards = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-    return allCards.filter((card) => {
-      const laneMatches = laneFilter === "all" || card.lane === laneFilter;
-      const queryMatches =
-        !normalizedQuery ||
-        card.ticketId.toLowerCase().includes(normalizedQuery) ||
-        card.description.toLowerCase().includes(normalizedQuery) ||
-        card.action.toLowerCase().includes(normalizedQuery) ||
-        card.order?.orderId.toLowerCase().includes(normalizedQuery);
-      return laneMatches && queryMatches;
-    });
-  }, [allCards, laneFilter, query]);
+const SPRINTS: { n: number; title: string; bonus: boolean }[] = [
+  { n: 1, title: "Ingest + deploy", bonus: false },
+  { n: 2, title: "TF-IDF + vote", bonus: false },
+  { n: 3, title: "Policy + guardrails", bonus: false },
+  { n: 4, title: "Template replies", bonus: false },
+  { n: 5, title: "Two-lane board", bonus: false },
+  { n: 6, title: "Actions + audit", bonus: false },
+  { n: 7, title: "Live submit box", bonus: false },
+  { n: 8, title: "LLM replies", bonus: false },
+  { n: 9, title: "Threshold slider", bonus: true },
+  { n: 10, title: "Savings counter", bonus: true },
+  { n: 11, title: "Approve / override", bonus: true },
+  { n: 12, title: "Realtime stream", bonus: true },
+  { n: 13, title: "Qdrant hybrid", bonus: true },
+];
 
-  const autoCards = filteredCards.filter((card) => card.lane === "auto");
-  const humanCards = filteredCards.filter((card) => card.lane === "human");
-  const counts = data?.counts ?? { auto: 0, human: 0, total: 0 };
-  const autoRate = counts.total > 0 ? Math.round((counts.auto / counts.total) * 100) : 0;
-
-  async function runPipeline() {
-    setBusyAction("pipeline");
-    setNotice(null);
-    try {
-      const response = await fetch("/api/tickets/process", { method: "POST" });
-      const json = await response.json();
-      if (!response.ok || !json.ok) {
-        throw new Error(json.error ?? `Pipeline returned ${response.status}`);
-      }
-      const reloaded = await load();
-      if (reloaded) {
-        setNotice({
-          tone: "success",
-          message: `Pipeline complete: ${json.processed} processed, ${json.auto} auto-resolved, ${json.human} routed to review.`,
-        });
-      }
-    } catch (error) {
-      setNotice({
-        tone: "error",
-        message: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  function selectLane(next: LaneFilter) {
-    setView("board");
-    setLaneFilter(next);
-    setSelectedTicketId(null);
-  }
-
-  function navigate(next: AppView) {
-    if (ticketSubmitting) return;
-    setView(next);
-    setSelectedTicketId(null);
-    setShowSubmit(false);
-  }
-
-  function openSubmit() {
-    setView("board");
-    setShowSubmit(true);
-  }
+export default function HomePage() {
+  const [activeStage, setActiveStage] = useState(0);
+  const stage = STAGES[activeStage];
 
   return (
-    <div className="app-shell">
-      <DesktopSidebar active={view} onNavigate={navigate} onCreate={openSubmit} />
+    <div className="home">
+      <SiteNav />
 
-      <div className="workspace">
-        <header className="topbar">
-          <div className="topbar-primary">
-            <div className="mobile-brand">
-              <span className="brand-mark"><Icon name="sparkles" /></span>
-              <span>Zepto Support</span>
-            </div>
-
-            {view === "board" ? (
-              <label className="search-field">
-                <Icon name="search" />
-                <input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search ticket, order or action"
-                  aria-label="Search tickets"
-                />
-                {query && (
-                  <button type="button" onClick={() => setQuery("")} aria-label="Clear search">
-                    <Icon name="close" />
-                  </button>
-                )}
-              </label>
-            ) : (
-              <div className="topbar-view-title"><span><Icon name="analytics" /></span><div><strong>Health dashboard</strong><small>Current decision snapshot</small></div></div>
-            )}
-
-            <div className="topbar-actions">
-              <span className="system-status"><i /> Deterministic policy</span>
-              <button
-                type="button"
-                className="icon-button"
-                onClick={() => void load(true)}
-                disabled={busyAction !== null || ticketSubmitting}
-                aria-label="Refresh data"
-                title="Refresh data"
-              >
-                <Icon name="refresh" className={busyAction === "refresh" ? "spin" : ""} />
-              </button>
-              <button type="button" className="primary-button" onClick={openSubmit}>
-                <Icon name="plus" /> New ticket
-              </button>
-            </div>
+      {/* Hero */}
+      <header className="home-hero">
+        <div className="home-hero-inner">
+          <span className="home-eyebrow"><Icon name="sparkles" /> Agentic AI Hackathon · Q4</span>
+          <h1>
+            Support tickets that <span>resolve themselves</span> — safely.
+          </h1>
+          <p className="home-lede">
+            ZeptoSupport auto-resolves routine tickets by matching them against 300 historically
+            resolved cases, and queues the rest for humans with precedents attached. Every decision
+            is deterministic, auditable, and reproducible with the model offline.
+          </p>
+          <div className="home-hero-cta">
+            <Link href="/board" className="home-btn home-btn-primary">
+              <Icon name="overview" /> Open the live board
+            </Link>
+            <a href="#pipeline" className="home-btn home-btn-ghost">
+              <Icon name="workflow" /> See how it works
+            </a>
           </div>
-
-          <div className="topbar-secondary">
-            <div className="breadcrumbs"><span>Command center</span><Icon name="chevron" /><strong>{view === "board" ? "Resolution board" : "Health dashboard"}</strong></div>
-            {view === "board" ? (
-              <LaneSwitch active={laneFilter} counts={counts} onSelect={selectLane} />
-            ) : (
-              <div className="health-context"><Icon name="analytics" /> {counts.total} current decisions · {autoRate}% automation</div>
-            )}
-            <button
-              type="button"
-              className="secondary-button run-button"
-              onClick={() => void runPipeline()}
-              disabled={busyAction !== null || ticketSubmitting}
-            >
-              <Icon name="play" /> {busyAction === "pipeline" ? "Processing…" : "Run pipeline"}
-            </button>
-          </div>
-        </header>
-
-        <main className={`dashboard dashboard-${view}`}>
-          {view === "board" ? (
-            <section className="dashboard-main" aria-labelledby="board-title">
-              <div className="page-heading">
-                <div>
-                  <p className="eyebrow">AI support operations</p>
-                  <h1 id="board-title">Resolution command center</h1>
-                  <p>Every decision is grounded in historical precedents and checked by deterministic policy guardrails.</p>
-                </div>
-                <div className="heading-badge"><Icon name="shield" /> Auditable decisions</div>
-              </div>
-
-              <NoticeBanner notice={notice} onDismiss={() => setNotice(null)} />
-
-              {showSubmit && (
-                <SubmitTicketPanel
-                  disabled={busyAction !== null}
-                  onBusyChange={setTicketSubmitting}
-                  onClose={() => setShowSubmit(false)}
-                  onSubmitted={async (decision) => {
-                    const reloaded = await load();
-                    setShowSubmit(false);
-                    if (reloaded) {
-                      setSelectedTicketId(decision.ticketId);
-                      setNotice({
-                        tone: "success",
-                        message: `${decision.ticketId} was processed and routed to ${decision.lane === "auto" ? "auto-resolution" : "human review"}.`,
-                      });
-                    }
-                  }}
-                />
-              )}
-
-              {status === "loading" && <BoardSkeleton />}
-              {status === "error" && !data && <LoadError onRetry={() => void load(true)} />}
-
-              {status === "ready" && data && (
-                <div className={`board ${laneFilter !== "all" ? "board-single" : ""}`}>
-                  {laneFilter !== "human" && (
-                    <Lane
-                      title="Auto-resolved"
-                      description="Safe, high-confidence actions"
-                      kind="auto"
-                      cards={autoCards}
-                      selectedId={selectedTicketId}
-                      onSelect={setSelectedTicketId}
-                      empty={query ? "No auto-resolved tickets match your search." : "No tickets have been auto-resolved yet."}
-                    />
-                  )}
-                  {laneFilter !== "auto" && (
-                    <Lane
-                      title="Needs human review"
-                      description="Conflicts, weak evidence or policy vetoes"
-                      kind="human"
-                      cards={humanCards}
-                      selectedId={selectedTicketId}
-                      onSelect={setSelectedTicketId}
-                      empty={query ? "No human-review tickets match your search." : "The human-review queue is clear."}
-                    />
-                  )}
-                </div>
-              )}
-            </section>
-          ) : (
-            <HealthDashboard
-              cards={allCards}
-              status={status}
-              notice={notice}
-              onDismissNotice={() => setNotice(null)}
-              onRetry={() => void load(true)}
-              onOpenBoard={() => navigate("board")}
-            />
-          )}
-        </main>
-      </div>
-
-      <MobileNavigation active={view} onNavigate={navigate} onCreate={openSubmit} />
-      <TicketDrawer card={selectedTicket} onClose={() => setSelectedTicketId(null)} />
-    </div>
-  );
-}
-
-function DesktopSidebar({ active, onNavigate, onCreate }: { active: AppView; onNavigate: (view: AppView) => void; onCreate: () => void }) {
-  return (
-    <aside className="sidebar">
-      <button type="button" className="sidebar-logo" onClick={() => onNavigate("board")} aria-label="Zepto support home">
-        <Icon name="sparkles" />
-      </button>
-      <nav aria-label="Primary navigation">
-        <SidebarButton label="Resolution board" icon="overview" active={active === "board"} onClick={() => onNavigate("board")} />
-        <SidebarButton label="Health dashboard" icon="analytics" active={active === "health"} onClick={() => onNavigate("health")} />
-      </nav>
-      <div className="sidebar-bottom">
-        <button type="button" className="sidebar-create" onClick={onCreate} title="Create live ticket"><Icon name="plus" /></button>
-        <div className="agent-avatar" title="Support command center">AI<span /></div>
-      </div>
-    </aside>
-  );
-}
-
-function SidebarButton({ label, icon, active, onClick }: { label: string; icon: IconName; active: boolean; onClick: () => void }) {
-  return (
-    <button type="button" className={`sidebar-button ${active ? "active" : ""}`} onClick={onClick} aria-label={label} aria-current={active ? "page" : undefined} title={label}>
-      <Icon name={icon} />
-    </button>
-  );
-}
-
-function LaneSwitch({ active, counts, onSelect }: { active: LaneFilter; counts: BoardResponse["counts"]; onSelect: (lane: LaneFilter) => void }) {
-  return (
-    <div className="lane-switch" role="group" aria-label="Switch ticket lane">
-      <LaneSwitchButton label="All" count={counts.total} active={active === "all"} onClick={() => onSelect("all")} />
-      <LaneSwitchButton label="Auto" count={counts.auto} active={active === "auto"} tone="auto" onClick={() => onSelect("auto")} />
-      <LaneSwitchButton label="Human" count={counts.human} active={active === "human"} tone="human" onClick={() => onSelect("human")} />
-    </div>
-  );
-}
-
-function LaneSwitchButton({ label, count, active, tone = "all", onClick }: { label: string; count: number; active: boolean; tone?: "all" | "auto" | "human"; onClick: () => void }) {
-  return <button type="button" className={`lane-switch-button switch-${tone} ${active ? "active" : ""}`} onClick={onClick} aria-pressed={active}><span>{label}</span><b>{count}</b></button>;
-}
-
-function Lane({ title, description, kind, cards, selectedId, onSelect, empty }: { title: string; description: string; kind: "auto" | "human"; cards: BoardCard[]; selectedId: string | null; onSelect: (id: string) => void; empty: string }) {
-  return (
-    <section className={`lane lane-${kind}`}>
-      <header className="lane-header">
-        <div className="lane-title"><span><Icon name={kind === "auto" ? "check" : "alert"} /></span><div><h2>{title}</h2><p>{description}</p></div></div>
-        <b>{cards.length}</b>
-      </header>
-      <div className="lane-list">
-        {cards.length === 0 ? (
-          <div className="lane-empty"><Icon name={kind === "auto" ? "check" : "alert"} /><p>{empty}</p></div>
-        ) : (
-          cards.map((card, index) => <TicketCard key={card.ticketId} card={card} active={selectedId === card.ticketId} index={index} onSelect={() => onSelect(card.ticketId)} />)
-        )}
-      </div>
-    </section>
-  );
-}
-
-function HealthDashboard({ cards, status, notice, onDismissNotice, onRetry, onOpenBoard }: { cards: BoardCard[]; status: LoadStatus; notice: Notice; onDismissNotice: () => void; onRetry: () => void; onOpenBoard: () => void }) {
-  const counts = {
-    auto: cards.filter((card) => card.lane === "auto").length,
-    human: cards.filter((card) => card.lane === "human").length,
-    total: cards.length,
-  };
-  const autoRate = counts.total > 0 ? Math.round((counts.auto / counts.total) * 100) : 0;
-  const averageConfidence = average(cards.map((card) => card.confidence));
-  const averageSimilarity = average(cards.map((card) => card.topSimilarity));
-  const vetoCount = cards.filter((card) => card.guardrails.some((guardrail) => guardrail.status === "veto")).length;
-  const mutationCount = cards.filter((card) => card.guardrails.some((guardrail) => guardrail.status === "mutate")).length;
-  const cancelledOrders = cards.filter((card) => card.order?.deliveryStatus === "cancelled").length;
-  const weakEvidence = cards.filter((card) => card.vetoedBy === "G5").length;
-  const templateReplies = cards.filter((card) => card.replySource === "template").length;
-  const llmReplies = cards.filter((card) => card.replySource === "llm").length;
-  const surfacedPrecedents = cards.reduce((sum, card) => sum + card.precedents.length, 0);
-  const actionMix = getActionMix(cards);
-
-  if (status === "error" && cards.length === 0) {
-    return <section className="health-dashboard"><LoadError onRetry={onRetry} /></section>;
-  }
-
-  return (
-    <section className="health-dashboard" aria-labelledby="health-title">
-      <div className="page-heading health-page-heading">
-        <div>
-          <p className="eyebrow">Decision intelligence</p>
-          <h1 id="health-title">Resolution health dashboard</h1>
-          <p>A current snapshot derived from persisted board decisions—no estimated trends or invented operational data.</p>
+          <dl className="home-stat-row">
+            <Stat value="300" label="historical precedents" />
+            <Stat value="11 / 19" label="auto / human split" />
+            <Stat value="5" label="policy guardrails" />
+            <Stat value="1" label="LLM call — reply only" />
+          </dl>
         </div>
-        <button type="button" className="secondary-button" onClick={onOpenBoard}><Icon name="overview" /> Open resolution board</button>
+        <div className="home-hero-glow" aria-hidden="true" />
+      </header>
+
+      {/* Problem */}
+      <Section id="problem" kicker="The problem" title="A human reads every ticket, even the obvious ones">
+        <div className="home-problem">
+          <div className="home-problem-card home-problem-before">
+            <span className="home-tag home-tag-muted">Without the system</span>
+            <p>Every “item missing”, “refund not received”, “wrong brand” ticket waits in one queue for a human — the routine ones buried with the genuinely hard ones.</p>
+          </div>
+          <div className="home-problem-arrow"><Icon name="arrowRight" /></div>
+          <div className="home-problem-card home-problem-after">
+            <span className="home-tag home-tag-brand">With ZeptoSupport</span>
+            <p>Routine tickets are matched to precedent and resolved automatically inside guardrails. Humans see only conflicts, weak evidence, and policy vetoes — each with a drafted reply ready to send.</p>
+          </div>
+        </div>
+      </Section>
+
+      {/* Interactive pipeline */}
+      <Section id="pipeline" kicker="How it decides" title="Four deterministic stages, one reproducible path">
+        <p className="home-section-lede">
+          Triage, policy, and audit are pure functions. The only model call writes the customer
+          reply — it never decides whether money moves. Click a stage to open it.
+        </p>
+        <div className="home-pipeline">
+          <div className="home-pipeline-track" role="tablist" aria-label="Pipeline stages">
+            {STAGES.map((s, index) => (
+              <button
+                key={s.id}
+                role="tab"
+                aria-selected={index === activeStage}
+                className={`home-stage ${index === activeStage ? "active" : ""}`}
+                onClick={() => setActiveStage(index)}
+              >
+                <span className="home-stage-icon"><Icon name={s.icon} /></span>
+                <b>{s.n}</b>
+                <strong>{s.title}</strong>
+                <small>{s.tagline}</small>
+                {index < STAGES.length - 1 && <i className="home-stage-link" aria-hidden="true" />}
+              </button>
+            ))}
+          </div>
+          <div className="home-stage-detail" role="tabpanel">
+            <div className="home-stage-detail-head">
+              <span><Icon name={stage.icon} /></span>
+              <div>
+                <small>Stage {stage.n}</small>
+                <h3>{stage.title}</h3>
+              </div>
+            </div>
+            <p>{stage.detail}</p>
+            <ul>
+              {stage.points.map((point) => (
+                <li key={point}><Icon name="check" /> {point}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </Section>
+
+      {/* Gate simulator */}
+      <Section id="gate" kicker="Try it" title="The gate is a rule, not a vibe">
+        <p className="home-section-lede">
+          Move a ticket&apos;s scores and watch the lane flip. These are the exact thresholds the
+          board ships with — auto-resolve needs all three to clear at once.
+        </p>
+        <GateSimulator />
+      </Section>
+
+      {/* Guardrails */}
+      <Section id="guardrails" kicker="Safety" title="Five guardrails the model can't argue with">
+        <div className="home-guardrails">
+          {GUARDRAILS.map((g) => (
+            <article key={g.id} className={`home-guardrail home-guard-${g.kind}`}>
+              <header>
+                <span className="home-guard-icon"><Icon name={g.icon} /></span>
+                <b>{g.id}</b>
+                <span className={`home-guard-kind kind-${g.kind}`}>{g.kind}</span>
+              </header>
+              <h3>{g.title}</h3>
+              <p>{g.body}</p>
+            </article>
+          ))}
+        </div>
+      </Section>
+
+      {/* Data facts */}
+      <Section id="data" kicker="The hard part" title="Four data facts that break naive code">
+        <div className="home-facts">
+          {FACTS.map((fact, index) => (
+            <article key={fact.title} className="home-fact">
+              <b>{String(index + 1).padStart(2, "0")}</b>
+              <div>
+                <h3>{fact.title}</h3>
+                <p>{fact.body}</p>
+              </div>
+            </article>
+          ))}
+        </div>
+      </Section>
+
+      {/* Scenarios */}
+      <Section id="scenarios" kicker="Validation" title="Four scenarios, four correct outcomes">
+        <div className="home-scenarios">
+          {SCENARIOS.map((s) => (
+            <article key={s.n} className={`home-scenario scenario-${s.tone}`}>
+              <span className="home-scenario-n">{s.n}</span>
+              <h3>{s.title}</h3>
+              <p>{s.body}</p>
+              <div className={`home-scenario-result result-${s.tone}`}>
+                <Icon name={s.tone === "auto" ? "check" : "alert"} /> {s.result}
+              </div>
+            </article>
+          ))}
+        </div>
+      </Section>
+
+      {/* Stack */}
+      <Section id="stack" kicker="Architecture" title="A small, finished system">
+        <div className="home-stack">
+          {STACK.map((item) => (
+            <article key={item.name} className="home-stack-item">
+              <span><Icon name={item.icon} /></span>
+              <div>
+                <b>{item.name}</b>
+                <small>{item.role}</small>
+              </div>
+            </article>
+          ))}
+        </div>
+        <div className="home-principles">
+          <Principle icon="lock" text="Only the reply-writer calls an LLM. Triage, policy and audit are pure and reproducible offline." />
+          <Principle icon="sliders" text="Every threshold lives in one file. No magic numbers anywhere else." />
+          <Principle icon="history" text="The audit log is append-only. Overrides append a new row — they never edit history." />
+          <Principle icon="shield" text="The demo survives a dead LLM key and an unreachable Qdrant. Both degrade; neither 500s." />
+        </div>
+      </Section>
+
+      {/* Sprint timeline */}
+      <Section id="build" kicker="The build" title="Eight core sprints, then bonus">
+        <div className="home-timeline">
+          {SPRINTS.map((s) => (
+            <div key={s.n} className={`home-sprint ${s.bonus ? "bonus" : "core"}`}>
+              <b>{s.n}</b>
+              <span>{s.title}</span>
+              {s.bonus && <i className="home-sprint-tag">bonus</i>}
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      {/* Final CTA */}
+      <section className="home-final">
+        <div className="home-final-inner">
+          <LogoMark size={54} />
+          <h2>See it decide in real time</h2>
+          <p>Open the board, run the pipeline over 30 tickets, drag the thresholds, and drop a novel ticket into the live box.</p>
+          <Link href="/board" className="home-btn home-btn-primary home-btn-lg">
+            <Icon name="overview" /> Open the live board <Icon name="arrowRight" />
+          </Link>
+        </div>
+      </section>
+
+      <footer className="home-footer">
+        <LogoWordmark size={30} tagline="Agentic ticket resolution" />
+        <p>Deterministic by design · Auditable by default</p>
+      </footer>
+    </div>
+  );
+}
+
+function SiteNav() {
+  return (
+    <nav className="home-nav">
+      <Link href="/" className="home-nav-brand"><LogoWordmark size={32} /></Link>
+      <div className="home-nav-links">
+        <a href="#pipeline">Pipeline</a>
+        <a href="#guardrails">Guardrails</a>
+        <a href="#data">Data</a>
+        <a href="#stack">Stack</a>
       </div>
-
-      <NoticeBanner notice={notice} onDismiss={onDismissNotice} />
-
-      {status === "loading" ? (
-        <div className="health-loading" aria-busy="true" aria-label="Loading health dashboard"><i /><i /><i /><i /><span className="sr-only">Loading health dashboard</span></div>
-      ) : (
-        <>
-          <div className="health-kpi-grid">
-            <HealthKpi label="Current decisions" value={counts.total} detail="Latest decision per ticket" icon="ticket" />
-            <HealthKpi label="Automation rate" value={`${autoRate}%`} detail={`${counts.auto} safely auto-routed`} icon="sparkles" tone="brand" />
-            <HealthKpi label="Human review" value={counts.human} detail="Awaiting agent attention" icon="alert" tone="warning" />
-            <HealthKpi label="Average confidence" value={formatPercent(averageConfidence)} detail="Across the current board" icon="check" tone="success" />
-          </div>
-
-          <div className="health-grid">
-            <section className="health-panel automation-panel">
-              <HealthPanelHeader icon="analytics" title="Resolution distribution" subtitle="Current board partition" />
-              <div className="automation-content">
-                <div className="automation-ring" style={{ "--automation-rate": `${autoRate * 3.6}deg` } as CSSProperties}>
-                  <div><strong>{autoRate}%</strong><small>automated</small></div>
-                </div>
-                <div className="distribution-list">
-                  <DistributionRow label="Auto-resolved" value={counts.auto} total={counts.total} tone="auto" />
-                  <DistributionRow label="Human review" value={counts.human} total={counts.total} tone="human" />
-                </div>
-              </div>
-            </section>
-
-            <section className="health-panel evidence-health-panel">
-              <HealthPanelHeader icon="layers" title="Evidence health" subtitle="Retrieval quality and corpus coverage" />
-              <div className="evidence-health-grid">
-                <SnapshotMetric label="Surfaced precedents" value={surfacedPrecedents} detail="Evidence records attached to current decisions" />
-                <SnapshotMetric label="Average top match" value={formatPercent(averageSimilarity)} detail="Similarity of rank-one precedents" />
-                <SnapshotMetric label="Weak-evidence vetoes" value={weakEvidence} detail="Tickets stopped by G5" />
-                <SnapshotMetric label="Template replies" value={templateReplies} detail={`${llmReplies} replies generated by LLM`} />
-              </div>
-            </section>
-
-            <section className="health-panel safety-panel">
-              <HealthPanelHeader icon="shield" title="Policy safety" subtitle="Visible deterministic interventions" />
-              <div className="safety-list">
-                <SafetyRow icon="alert" label="Decisions with vetoes" value={vetoCount} detail="Automatic execution blocked" tone="danger" />
-                <SafetyRow icon="shield" label="Policy mutations" value={mutationCount} detail="Amount or action safely adjusted" tone="info" />
-                <SafetyRow icon="package" label="Cancelled orders" value={cancelledOrders} detail="Shown prominently for G1 review" tone="warning" />
-                <SafetyRow icon="check" label="No veto recorded" value={Math.max(0, counts.total - vetoCount)} detail="Latest decision completed policy evaluation" tone="success" />
-              </div>
-            </section>
-
-            <section className="health-panel action-panel">
-              <HealthPanelHeader icon="overview" title="Recommended action mix" subtitle="Latest proposed actions across all tickets" />
-              <div className="action-mix-list">
-                {actionMix.length === 0 ? <p className="health-empty">No decisions are available yet.</p> : actionMix.map((item) => (
-                  <div className="action-mix-row" key={item.action}>
-                    <span><b>{formatAction(item.action)}</b><small>{item.count} ticket{item.count === 1 ? "" : "s"}</small></span>
-                    <i><i style={{ width: `${Math.round((item.count / Math.max(1, counts.total)) * 100)}%` }} /></i>
-                    <strong>{Math.round((item.count / Math.max(1, counts.total)) * 100)}%</strong>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            <section className="health-panel workflow-health-panel">
-              <HealthPanelHeader icon="sparkles" title="Decision workflow" subtitle="One reproducible path for every ticket" />
-              <ol className="health-workflow">
-                <li><b>1</b><span><strong>Retrieve</strong><small>Search qualifying historical evidence</small></span></li>
-                <li><b>2</b><span><strong>Vote</strong><small>Measure action agreement and margin</small></span></li>
-                <li><b>3</b><span><strong>Guard</strong><small>Apply G1–G5 deterministic policy checks</small></span></li>
-                <li><b>4</b><span><strong>Route</strong><small>Auto-resolve or retain human control</small></span></li>
-              </ol>
-            </section>
-          </div>
-        </>
-      )}
-    </section>
-  );
-}
-
-function HealthKpi({ label, value, detail, icon, tone = "neutral" }: { label: string; value: string | number; detail: string; icon: IconName; tone?: "neutral" | "brand" | "success" | "warning" }) {
-  return <article className={`health-kpi health-kpi-${tone}`}><span><Icon name={icon} /></span><div><small>{label}</small><strong>{value}</strong><p>{detail}</p></div></article>;
-}
-
-function HealthPanelHeader({ icon, title, subtitle }: { icon: IconName; title: string; subtitle: string }) {
-  return <header className="health-panel-header"><span><Icon name={icon} /></span><div><h2>{title}</h2><p>{subtitle}</p></div></header>;
-}
-
-function DistributionRow({ label, value, total, tone }: { label: string; value: number; total: number; tone: "auto" | "human" }) {
-  const percentage = total > 0 ? Math.round((value / total) * 100) : 0;
-  return <div className={`distribution-row distribution-${tone}`}><div><span><i />{label}</span><b>{value}</b></div><div className="distribution-track"><i style={{ width: `${percentage}%` }} /></div><small>{percentage}% of current decisions</small></div>;
-}
-
-function SnapshotMetric({ label, value, detail }: { label: string; value: string | number; detail: string }) {
-  return <article className="snapshot-metric"><small>{label}</small><strong>{value}</strong><p>{detail}</p></article>;
-}
-
-function SafetyRow({ icon, label, value, detail, tone }: { icon: IconName; label: string; value: number; detail: string; tone: "danger" | "info" | "warning" | "success" }) {
-  return <div className={`safety-row safety-${tone}`}><span><Icon name={icon} /></span><div><b>{label}</b><small>{detail}</small></div><strong>{value}</strong></div>;
-}
-
-function NoticeBanner({ notice, onDismiss }: { notice: Notice; onDismiss: () => void }) {
-  if (!notice) return null;
-  return <div className={`notice notice-${notice.tone}`} role={notice.tone === "error" ? "alert" : "status"}><Icon name={notice.tone === "success" ? "check" : "alert"} /><span>{notice.message}</span><button type="button" onClick={onDismiss} aria-label="Dismiss message"><Icon name="close" /></button></div>;
-}
-
-function LoadError({ onRetry }: { onRetry: () => void }) {
-  return <div className="error-state"><span><Icon name="alert" /></span><h2>Support data unavailable</h2><p>The current decisions could not be loaded. Check the Supabase environment and try again.</p><button className="primary-button" type="button" onClick={onRetry}>Try again</button></div>;
-}
-
-function SubmitTicketPanel({ disabled, onBusyChange, onClose, onSubmitted }: { disabled: boolean; onBusyChange: (busy: boolean) => void; onClose: () => void; onSubmitted: (decision: Decision) => Promise<void> }) {
-  const [description, setDescription] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
-    const value = description.trim();
-    if (!value || busy || disabled) return;
-    setBusy(true);
-    onBusyChange(true);
-    setError("");
-    try {
-      const response = await fetch("/api/tickets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ description: value }),
-      });
-      const json = await response.json();
-      if (!response.ok || !json.ok) throw new Error(json.error ?? `Request returned ${response.status}`);
-      await onSubmitted(json.decision as Decision);
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : String(submitError));
-    } finally {
-      setBusy(false);
-      onBusyChange(false);
-    }
-  }
-
-  return (
-    <section className="submit-panel" aria-labelledby="submit-title">
-      <div className="submit-icon"><Icon name="sparkles" /></div>
-      <div className="submit-copy"><h2 id="submit-title">Submit a live support ticket</h2><p>Try a novel complaint to verify that weak evidence is safely routed to a human.</p></div>
-      <form onSubmit={submit}>
-        <input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="e.g. The app crashed and charged me twice" aria-label="Ticket description" autoFocus disabled={disabled || busy} />
-        <button type="submit" className="primary-button" disabled={disabled || busy || !description.trim()}>{busy ? "Processing…" : disabled ? "Pipeline busy" : "Submit"}</button>
-      </form>
-      <button type="button" className="submit-close" onClick={onClose} aria-label="Close live ticket form"><Icon name="close" /></button>
-      {error && <p className="submit-error" role="alert">{error}</p>}
-    </section>
-  );
-}
-
-function BoardSkeleton() {
-  return <div className="board skeleton-board" aria-label="Loading board"><div className="skeleton-lane"><i /><i /><i /></div><div className="skeleton-lane"><i /><i /><i /></div></div>;
-}
-
-function MobileNavigation({ active, onNavigate, onCreate }: { active: AppView; onNavigate: (view: AppView) => void; onCreate: () => void }) {
-  return (
-    <nav className="mobile-nav" aria-label="Mobile navigation">
-      <button type="button" className={active === "board" ? "active" : ""} aria-current={active === "board" ? "page" : undefined} onClick={() => onNavigate("board")}><Icon name="overview" /><span>Board</span></button>
-      <button type="button" className="mobile-create" onClick={onCreate} aria-label="New ticket"><Icon name="plus" /></button>
-      <button type="button" className={active === "health" ? "active" : ""} aria-current={active === "health" ? "page" : undefined} onClick={() => onNavigate("health")}><Icon name="analytics" /><span>Health</span></button>
+      <Link href="/board" className="home-btn home-btn-primary home-nav-cta">
+        <Icon name="overview" /> Live board
+      </Link>
     </nav>
   );
 }
 
-function average(values: number[]): number {
-  if (values.length === 0) return 0;
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
+function Section({
+  id,
+  kicker,
+  title,
+  children,
+}: {
+  id: string;
+  kicker: string;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section id={id} className="home-section">
+      <div className="home-section-head">
+        <span className="home-kicker">{kicker}</span>
+        <h2>{title}</h2>
+      </div>
+      {children}
+    </section>
+  );
 }
 
-function getActionMix(cards: BoardCard[]): { action: ResolutionAction; count: number }[] {
-  const counts = new Map<ResolutionAction, number>();
-  for (const card of cards) counts.set(card.action, (counts.get(card.action) ?? 0) + 1);
-  return [...counts.entries()]
-    .map(([action, count]) => ({ action, count }))
-    .sort((left, right) => right.count - left.count || left.action.localeCompare(right.action));
+function Stat({ value, label }: { value: string; label: string }) {
+  return (
+    <div className="home-stat">
+      <dt>{value}</dt>
+      <dd>{label}</dd>
+    </div>
+  );
+}
+
+function Principle({ icon, text }: { icon: IconName; text: string }) {
+  return (
+    <div className="home-principle">
+      <span><Icon name={icon} /></span>
+      <p>{text}</p>
+    </div>
+  );
+}
+
+function GateSimulator() {
+  const [sim, setSim] = useState(1.0);
+  const [share, setShare] = useState(0.68);
+  const [margin, setMargin] = useState(0.35);
+
+  const t = DEFAULT_REPLAY_THRESHOLDS;
+  const lane = laneAtThresholds(
+    { topSimilarity: sim, voteShare: share, voteMargin: margin, vetoedBy: null },
+    t,
+  );
+  const confidence = sim * share;
+  const checks = [
+    { label: "Top similarity", value: sim, min: t.minSimilarity },
+    { label: "Vote share", value: share, min: t.minVoteShare },
+    { label: "Vote margin", value: margin, min: t.minVoteMargin },
+  ];
+
+  return (
+    <div className="home-gate">
+      <div className="home-gate-controls">
+        <GateSlider label="Top similarity" value={sim} min={t.minSimilarity} onChange={setSim} />
+        <GateSlider label="Vote share" value={share} min={t.minVoteShare} onChange={setShare} />
+        <GateSlider label="Vote margin" value={margin} min={t.minVoteMargin} onChange={setMargin} />
+      </div>
+      <div className={`home-gate-verdict verdict-${lane}`}>
+        <span className="home-gate-badge">
+          <Icon name={lane === "auto" ? "check" : "alert"} />
+          {lane === "auto" ? "Auto-resolve" : "Needs human"}
+        </span>
+        <div className="home-gate-conf">
+          <small>confidence = topSim × share</small>
+          <b>{Math.round(confidence * 100)}%</b>
+        </div>
+        <ul className="home-gate-checks">
+          {checks.map((c) => {
+            const pass = c.value >= c.min;
+            return (
+              <li key={c.label} className={pass ? "pass" : "fail"}>
+                <Icon name={pass ? "check" : "close"} />
+                {c.label} <b>{c.value.toFixed(2)}</b> <em>≥ {c.min.toFixed(2)}</em>
+              </li>
+            );
+          })}
+        </ul>
+        <p className="home-gate-note">
+          {lane === "auto"
+            ? "All three gates clear and no guardrail vetoed — this ticket auto-resolves."
+            : "At least one gate fails, so the ticket is queued for a human — with a drafted reply attached."}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function GateSlider({
+  label,
+  value,
+  min,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  onChange: (value: number) => void;
+}) {
+  const pass = value >= min;
+  return (
+    <div className="home-gate-slider">
+      <small>
+        {label}
+        <b className={pass ? "pass" : "fail"}>{value.toFixed(2)}</b>
+      </small>
+      <input
+        type="range"
+        min={0}
+        max={1}
+        step={0.01}
+        value={value}
+        style={{ "--fill": `${Math.round(value * 100)}%` } as CSSProperties}
+        onChange={(event) => onChange(Number(event.target.value))}
+        aria-label={label}
+      />
+      <div className="home-gate-min" style={{ left: `${Math.round(min * 100)}%` } as CSSProperties}>
+        <i />
+        <span>min {min.toFixed(2)}</span>
+      </div>
+    </div>
+  );
 }
